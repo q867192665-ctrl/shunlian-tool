@@ -1,0 +1,1468 @@
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Input, Select, Checkbox, Radio } from 'antd';
+import styles from './WinboxEditor.module.css';
+
+const { TextArea } = Input;
+const { Option } = Select;
+
+interface WirelessInterface {
+  name: string;
+  type?: string;
+  mac_address?: string;
+  ssid?: string;
+  band?: string;
+  frequency?: string;
+  'channel-width'?: string;
+  'wireless-protocol'?: string;
+  mode?: string;
+  running?: boolean;
+  disabled?: boolean;
+  comment?: string;
+  '.id'?: string;
+  [key: string]: any;
+}
+
+interface WinboxEditorProps {
+  interface: WirelessInterface;
+  onChange: (iface: WirelessInterface) => void;
+  routerIp?: string;
+}
+
+const tabs = [
+  { key: 'general', label: '常规' },
+  { key: 'wireless', label: '无线' },
+  { key: 'datarates', label: '数据速率' },
+  { key: 'advanced', label: '高级' },
+  { key: 'ht', label: 'HT' },
+  { key: 'wds', label: 'WDS' },
+  { key: 'nstreme', label: 'Nstreme' },
+  { key: 'txpower', label: '发射功率' },
+];
+
+const frequencyOptions24G = [
+  { value: '2412', label: '2412 MHz (信道 1)', channel: 1 },
+  { value: '2417', label: '2417 MHz (信道 2)', channel: 2 },
+  { value: '2422', label: '2422 MHz (信道 3)', channel: 3 },
+  { value: '2427', label: '2427 MHz (信道 4)', channel: 4 },
+  { value: '2432', label: '2432 MHz (信道 5)', channel: 5 },
+  { value: '2437', label: '2437 MHz (信道 6)', channel: 6 },
+  { value: '2442', label: '2442 MHz (信道 7)', channel: 7 },
+  { value: '2447', label: '2447 MHz (信道 8)', channel: 8 },
+  { value: '2452', label: '2452 MHz (信道 9)', channel: 9 },
+  { value: '2457', label: '2457 MHz (信道 10)', channel: 10 },
+  { value: '2462', label: '2462 MHz (信道 11)', channel: 11 },
+  { value: '2467', label: '2467 MHz (信道 12)', channel: 12 },
+  { value: '2472', label: '2472 MHz (信道 13)', channel: 13 },
+  { value: '2484', label: '2484 MHz (信道 14)', channel: 14 },
+];
+
+const frequencyOptions5G = [
+  { value: '5180', label: '5180 MHz (信道 36)', channel: 36 },
+  { value: '5200', label: '5200 MHz (信道 40)', channel: 40 },
+  { value: '5220', label: '5220 MHz (信道 44)', channel: 44 },
+  { value: '5240', label: '5240 MHz (信道 48)', channel: 48 },
+  { value: '5260', label: '5260 MHz (信道 52)', channel: 52 },
+  { value: '5280', label: '5280 MHz (信道 56)', channel: 56 },
+  { value: '5300', label: '5300 MHz (信道 60)', channel: 60 },
+  { value: '5320', label: '5320 MHz (信道 64)', channel: 64 },
+  { value: '5500', label: '5500 MHz (信道 100)', channel: 100 },
+  { value: '5520', label: '5520 MHz (信道 104)', channel: 104 },
+  { value: '5540', label: '5540 MHz (信道 108)', channel: 108 },
+  { value: '5560', label: '5560 MHz (信道 112)', channel: 112 },
+  { value: '5580', label: '5580 MHz (信道 116)', channel: 116 },
+  { value: '5600', label: '5600 MHz (信道 120)', channel: 120 },
+  { value: '5620', label: '5620 MHz (信道 124)', channel: 124 },
+  { value: '5640', label: '5640 MHz (信道 128)', channel: 128 },
+  { value: '5660', label: '5660 MHz (信道 132)', channel: 132 },
+  { value: '5680', label: '5680 MHz (信道 136)', channel: 136 },
+  { value: '5700', label: '5700 MHz (信道 140)', channel: 140 },
+  { value: '5720', label: '5720 MHz (信道 144)', channel: 144 },
+  { value: '5745', label: '5745 MHz (信道 149)', channel: 149 },
+  { value: '5765', label: '5765 MHz (信道 153)', channel: 153 },
+  { value: '5785', label: '5785 MHz (信道 157)', channel: 157 },
+  { value: '5805', label: '5805 MHz (信道 161)', channel: 161 },
+  { value: '5825', label: '5825 MHz (信道 165)', channel: 165 },
+];
+
+const countryList = [
+  { value: 'no country set', label: '未设置国家' },
+  { value: 'albania', label: '阿尔巴尼亚 (AL)' },
+  { value: 'algeria', label: '阿尔及利亚 (DZ)' },
+  { value: 'andorra', label: '安道尔 (AD)' },
+  { value: 'argentina', label: '阿根廷 (AR)' },
+  { value: 'armenia', label: '亚美尼亚 (AM)' },
+  { value: 'australia', label: '澳大利亚 (AU)' },
+  { value: 'austria', label: '奥地利 (AT)' },
+  { value: 'azerbaijan', label: '阿塞拜疆 (AZ)' },
+  { value: 'bahrain', label: '巴林 (BH)' },
+  { value: 'belarus', label: '白俄罗斯 (BY)' },
+  { value: 'belgium', label: '比利时 (BE)' },
+  { value: 'bosnia and herzegovina', label: '波黑 (BA)' },
+  { value: 'brazil', label: '巴西 (BR)' },
+  { value: 'brunei', label: '文莱 (BN)' },
+  { value: 'bulgaria', label: '保加利亚 (BG)' },
+  { value: 'canada', label: '加拿大 (CA)' },
+  { value: 'chile', label: '智利 (CL)' },
+  { value: 'china', label: '中国 (CN)' },
+  { value: 'colombia', label: '哥伦比亚 (CO)' },
+  { value: 'costa rica', label: '哥斯达黎加 (CR)' },
+  { value: 'croatia', label: '克罗地亚 (HR)' },
+  { value: 'cyprus', label: '塞浦路斯 (CY)' },
+  { value: 'czech republic', label: '捷克 (CZ)' },
+  { value: 'denmark', label: '丹麦 (DK)' },
+  { value: 'dominican republic', label: '多米尼加 (DO)' },
+  { value: 'ecuador', label: '厄瓜多尔 (EC)' },
+  { value: 'egypt', label: '埃及 (EG)' },
+  { value: 'estonia', label: '爱沙尼亚 (EE)' },
+  { value: 'finland', label: '芬兰 (FI)' },
+  { value: 'france', label: '法国 (FR)' },
+  { value: 'georgia', label: '格鲁吉亚 (GE)' },
+  { value: 'germany', label: '德国 (DE)' },
+  { value: 'greece', label: '希腊 (GR)' },
+  { value: 'guatemala', label: '危地马拉 (GT)' },
+  { value: 'honduras', label: '洪都拉斯 (HN)' },
+  { value: 'hong kong', label: '香港 (HK)' },
+  { value: 'hungary', label: '匈牙利 (HU)' },
+  { value: 'iceland', label: '冰岛 (IS)' },
+  { value: 'india', label: '印度 (IN)' },
+  { value: 'indonesia', label: '印度尼西亚 (ID)' },
+  { value: 'iran', label: '伊朗 (IR)' },
+  { value: 'iraq', label: '伊拉克 (IQ)' },
+  { value: 'ireland', label: '爱尔兰 (IE)' },
+  { value: 'israel', label: '以色列 (IL)' },
+  { value: 'italy', label: '意大利 (IT)' },
+  { value: 'jamaica', label: '牙买加 (JM)' },
+  { value: 'japan', label: '日本 (JP)' },
+  { value: 'jordan', label: '约旦 (JO)' },
+  { value: 'kazakhstan', label: '哈萨克斯坦 (KZ)' },
+  { value: 'kenya', label: '肯尼亚 (KE)' },
+  { value: 'korea, republic of', label: '韩国 (KR)' },
+  { value: 'kuwait', label: '科威特 (KW)' },
+  { value: 'latvia', label: '拉脱维亚 (LV)' },
+  { value: 'lebanon', label: '黎巴嫩 (LB)' },
+  { value: 'libya', label: '利比亚 (LY)' },
+  { value: 'liechtenstein', label: '列支敦士登 (LI)' },
+  { value: 'lithuania', label: '立陶宛 (LT)' },
+  { value: 'luxembourg', label: '卢森堡 (LU)' },
+  { value: 'macau', label: '澳门 (MO)' },
+  { value: 'macedonia', label: '北马其顿 (MK)' },
+  { value: 'malaysia', label: '马来西亚 (MY)' },
+  { value: 'malta', label: '马耳他 (MT)' },
+  { value: 'mexico', label: '墨西哥 (MX)' },
+  { value: 'moldova', label: '摩尔多瓦 (MD)' },
+  { value: 'monaco', label: '摩纳哥 (MC)' },
+  { value: 'montenegro', label: '黑山 (ME)' },
+  { value: 'morocco', label: '摩洛哥 (MA)' },
+  { value: 'nepal', label: '尼泊尔 (NP)' },
+  { value: 'netherlands', label: '荷兰 (NL)' },
+  { value: 'new zealand', label: '新西兰 (NZ)' },
+  { value: 'nicaragua', label: '尼加拉瓜 (NI)' },
+  { value: 'norway', label: '挪威 (NO)' },
+  { value: 'oman', label: '阿曼 (OM)' },
+  { value: 'pakistan', label: '巴基斯坦 (PK)' },
+  { value: 'panama', label: '巴拿马 (PA)' },
+  { value: 'paraguay', label: '巴拉圭 (PY)' },
+  { value: 'peru', label: '秘鲁 (PE)' },
+  { value: 'philippines', label: '菲律宾 (PH)' },
+  { value: 'poland', label: '波兰 (PL)' },
+  { value: 'portugal', label: '葡萄牙 (PT)' },
+  { value: 'qatar', label: '卡塔尔 (QA)' },
+  { value: 'romania', label: '罗马尼亚 (RO)' },
+  { value: 'russian federation', label: '俄罗斯 (RU)' },
+  { value: 'saudi arabia', label: '沙特阿拉伯 (SA)' },
+  { value: 'serbia', label: '塞尔维亚 (RS)' },
+  { value: 'singapore', label: '新加坡 (SG)' },
+  { value: 'slovakia', label: '斯洛伐克 (SK)' },
+  { value: 'slovenia', label: '斯洛文尼亚 (SI)' },
+  { value: 'south africa', label: '南非 (ZA)' },
+  { value: 'spain', label: '西班牙 (ES)' },
+  { value: 'sri lanka', label: '斯里兰卡 (LK)' },
+  { value: 'sweden', label: '瑞典 (SE)' },
+  { value: 'switzerland', label: '瑞士 (CH)' },
+  { value: 'syria', label: '叙利亚 (SY)' },
+  { value: 'taiwan', label: '台湾 (TW)' },
+  { value: 'thailand', label: '泰国 (TH)' },
+  { value: 'trinidad and tobago', label: '特立尼达和多巴哥 (TT)' },
+  { value: 'tunisia', label: '突尼斯 (TN)' },
+  { value: 'turkey', label: '土耳其 (TR)' },
+  { value: 'ukraine', label: '乌克兰 (UA)' },
+  { value: 'united arab emirates', label: '阿联酋 (AE)' },
+  { value: 'united kingdom', label: '英国 (GB)' },
+  { value: 'united states', label: '美国 (US)' },
+  { value: 'uruguay', label: '乌拉圭 (UY)' },
+  { value: 'uzbekistan', label: '乌兹别克斯坦 (UZ)' },
+  { value: 'venezuela', label: '委内瑞拉 (VE)' },
+  { value: 'vietnam', label: '越南 (VN)' },
+  { value: 'yemen', label: '也门 (YE)' },
+  { value: 'zimbabwe', label: '津巴布韦 (ZW)' },
+];
+
+const countryFrequencyRules: { [key: string]: { channels24G: number[], channels5G: number[] } } = {
+  'china': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'united states': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'japan': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+    channels5G: [36, 40, 44, 48],
+  },
+  'united kingdom': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'germany': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'australia': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165],
+  },
+  'canada': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'korea, republic of': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161],
+  },
+  'india': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'brazil': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165],
+  },
+  'russian federation': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64],
+  },
+  'singapore': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165],
+  },
+  'taiwan': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 149, 153, 157, 161, 165],
+  },
+  'thailand': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'malaysia': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'indonesia': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 149, 153, 157, 161, 165],
+  },
+  'philippines': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'vietnam': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64],
+  },
+  'france': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'italy': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'spain': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'netherlands': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'sweden': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'norway': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'denmark': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'finland': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'poland': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'switzerland': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'austria': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'belgium': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'portugal': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'greece': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'turkey': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64],
+  },
+  'israel': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'south africa': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'mexico': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165],
+  },
+  'argentina': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'chile': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'colombia': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'peru': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'new zealand': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165],
+  },
+  'hong kong': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'macau': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'saudi arabia': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'united arab emirates': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'qatar': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'kuwait': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48],
+  },
+  'bahrain': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'oman': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'egypt': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48],
+  },
+  'morocco': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48],
+  },
+  'kenya': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'pakistan': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'sri lanka': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 149, 153, 157, 161, 165],
+  },
+  'nepal': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48],
+  },
+  'ukraine': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64],
+  },
+  'romania': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'hungary': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'czech republic': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'slovakia': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'bulgaria': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'croatia': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'serbia': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48],
+  },
+  'slovenia': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'estonia': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'latvia': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'lithuania': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'ireland': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+  'iceland': {
+    channels24G: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    channels5G: [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144],
+  },
+};
+
+export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, onChange, routerIp }) => {
+  const [activeTab, setActiveTab] = useState('general');
+  const [is24G, setIs24G] = useState(true);
+  const [is5G, setIs5G] = useState(true);
+  const [freqInfoLoading, setFreqInfoLoading] = useState(false);
+  const [supportedBands, setSupportedBands] = useState<{ is24G: boolean; is5G: boolean; protocols: string[]; maxWidth: number } | null>(null);
+
+  useEffect(() => {
+    const bandVal = (iface.band || '').toLowerCase();
+    const nameVal = (iface.name || '').toLowerCase();
+    
+    if (bandVal.includes('5ghz') || bandVal.includes('5.') || nameVal.includes('5g') || nameVal.includes('5ghz') || bandVal === '5ghz-a' || bandVal === '5ghz-a/n' || bandVal === '5ghz-a/n/ac' || bandVal === '5ghz-a/n/ac-ax') {
+      setIs24G(false);
+      setIs5G(true);
+    } else if (bandVal.includes('2ghz') || bandVal.includes('2.4') || bandVal.includes('2g') || bandVal === '2ghz-b' || bandVal === '2ghz-g' || bandVal === '2ghz-b/g' || bandVal === '2ghz-b/g/n') {
+      setIs24G(true);
+      setIs5G(false);
+    } else {
+      setIs24G(true);
+      setIs5G(true);
+    }
+  }, [iface.band, iface.name]);
+
+  const fetchHardwareInfo = useCallback(async () => {
+    if (!routerIp || !iface.name) return;
+    setFreqInfoLoading(true);
+    try {
+      const resp = await fetch(`/api/wireless-hw-info?ip=${encodeURIComponent(routerIp)}&interface_name=${encodeURIComponent(iface.name || '')}`);
+      const data = await resp.json();
+      if (data.success && data.hw_info && data.hw_info.ranges) {
+        const ranges = data.hw_info.ranges;
+        const protocols: string[] = [];
+        let has24G = false;
+        let has5G = false;
+        let maxWidth = 20;
+        
+        const parts = ranges.split(',');
+        for (const part of parts) {
+          const trimmed = part.trim();
+          
+          // 解析频率范围判断频段: "2312-2732/5/b" → 频率2312-2732MHz是2.4G
+          const freqMatch = trimmed.match(/^(\d+)-(\d+)\//);
+          if (freqMatch) {
+            const startFreq = parseInt(freqMatch[1]);
+            const endFreq = parseInt(freqMatch[2]);
+            if (startFreq >= 2300 && endFreq <= 2800) {
+              has24G = true;
+            } else if (startFreq >= 4900 && endFreq <= 6200) {
+              has5G = true;
+            }
+          }
+          
+          // 解析协议: b, g, gn20, gn40, a, an20, an40, ac20, ac40, ac80, ax
+          if (trimmed.includes('gn20') || trimmed.includes('gn40') || trimmed.includes('an20') || trimmed.includes('an40')) {
+            protocols.push('n');
+          }
+          if (trimmed.includes('ac')) {
+            protocols.push('ac');
+          }
+          if (trimmed.includes('ax')) {
+            protocols.push('ax');
+          }
+          // 解析协议部分（/ 后面的内容）
+          const protoParts = trimmed.split('/');
+          if (protoParts.length >= 3) {
+            const protoStr = protoParts.slice(2).join('/');
+            const protoItems = protoStr.split(',');
+            for (const item of protoItems) {
+              const clean = item.trim();
+              if (clean === 'b') protocols.push('b');
+              if (clean === 'g') protocols.push('g');
+              if (clean === 'a') protocols.push('a');
+              if (clean === 'gn20' || clean === 'gn40' || clean === 'an20' || clean === 'an40') {
+                protocols.push('n');
+              }
+              if (clean.includes('ac')) protocols.push('ac');
+              if (clean.includes('ax')) protocols.push('ax');
+            }
+          } else if (protoParts.length === 1) {
+            // 没有 / 分隔符的独立项，如 "g", "gn20"
+            const clean = protoParts[0].trim();
+            if (clean === 'b') protocols.push('b');
+            if (clean === 'g') protocols.push('g');
+            if (clean === 'a') protocols.push('a');
+            if (clean === 'gn20' || clean === 'gn40' || clean === 'an20' || clean === 'an40') {
+              protocols.push('n');
+            }
+            if (clean.includes('ac')) protocols.push('ac');
+            if (clean.includes('ax')) protocols.push('ax');
+          }
+          
+          // 解析最大频宽
+          if (trimmed.includes('gn40') || trimmed.includes('an40')) {
+            maxWidth = Math.max(maxWidth, 40);
+          } else if (trimmed.includes('gn20') || trimmed.includes('an20')) {
+            maxWidth = Math.max(maxWidth, 20);
+          }
+          if (trimmed.includes('ac')) {
+            maxWidth = Math.max(maxWidth, 80);
+          }
+          if (trimmed.includes('ax')) {
+            maxWidth = Math.max(maxWidth, 160);
+          }
+        }
+        
+        const uniqueProtocols = [...new Set(protocols)];
+        setSupportedBands({ is24G: has24G, is5G: has5G, protocols: uniqueProtocols, maxWidth });
+        
+        if (has24G) setIs24G(true);
+        if (has5G) setIs5G(true);
+        if (!has24G) setIs24G(false);
+        if (!has5G) setIs5G(false);
+      }
+    } catch (err) {
+      console.error('Failed to fetch hardware info:', err);
+    } finally {
+      setFreqInfoLoading(false);
+    }
+  }, [routerIp, iface.name]);
+
+  useEffect(() => {
+    fetchHardwareInfo();
+  }, [fetchHardwareInfo]);
+
+  const getBandOptions = () => {
+    if (!supportedBands) {
+      return { is24G: true, is5G: true, maxWidth: 160, options24G: [], options5G: [] };
+    }
+    
+    const { is24G: hw24G, is5G: hw5G, protocols, maxWidth } = supportedBands;
+    const options24G: string[] = [];
+    const options5G: string[] = [];
+    
+    if (hw24G) {
+      if (protocols.includes('b')) {
+        options24G.push('2ghz-onlyb');
+      }
+      if (protocols.includes('g')) {
+        options24G.push('2ghz-onlyg');
+        if (protocols.includes('b')) {
+          options24G.push('2ghz-b/g');
+        }
+      }
+      if (protocols.includes('n')) {
+        options24G.push('2ghz-onlyn');
+        if (protocols.includes('g')) {
+          options24G.push('2ghz-g/n');
+        }
+        if (protocols.includes('b') && protocols.includes('g')) {
+          options24G.push('2ghz-b/g/n');
+        }
+      }
+      if (options24G.length === 0) {
+        options24G.push('2ghz-onlyb', '2ghz-onlyg', '2ghz-b/g', '2ghz-onlyn', '2ghz-g/n', '2ghz-b/g/n');
+      }
+    }
+    
+    if (hw5G) {
+      if (protocols.includes('a')) {
+        options5G.push('5ghz-onlya');
+      }
+      if (protocols.includes('n')) {
+        options5G.push('5ghz-onlyn');
+        if (protocols.includes('a')) {
+          options5G.push('5ghz-a/n');
+        }
+      }
+      if (protocols.includes('ac')) {
+        options5G.push('5ghz-onlyac');
+        if (protocols.includes('n')) {
+          options5G.push('5ghz-n/ac');
+        }
+        if (protocols.includes('a') && protocols.includes('n')) {
+          options5G.push('5ghz-a/n/ac');
+        }
+      }
+      if (protocols.includes('ax')) {
+        options5G.push('5ghz-onlyax');
+        options5G.push('5ghz-a/n/ac-ax');
+      }
+      if (options5G.length === 0) {
+        options5G.push('5ghz-onlya', '5ghz-onlyn', '5ghz-a/n', '5ghz-onlyac', '5ghz-n/ac', '5ghz-a/n/ac', '5ghz-onlyax', '5ghz-a/n/ac-ax');
+      }
+    }
+    
+    return { is24G: hw24G, is5G: hw5G, maxWidth, options24G, options5G };
+  };
+
+  const bandOptions = getBandOptions();
+
+  const getBandType = (band: string): '2ghz' | '5ghz' | 'both' => {
+    const bandVal = band.toLowerCase();
+    const is24G = bandVal.includes('2ghz') || bandVal.includes('2.4');
+    const is5G = bandVal.includes('5ghz') || bandVal.includes('5.');
+    
+    if (is24G && !is5G) return '2ghz';
+    if (is5G && !is24G) return '5ghz';
+    return 'both';
+  };
+
+  const getChannelWidthOptions = (band: string): { value: string; label: string }[] => {
+    const bandType = getBandType(band);
+    const maxW = supportedBands?.maxWidth || 160;
+    
+    const allOptions: { value: string; label: string }[] = [
+      { value: '20mhz', label: '20MHz' },
+      { value: '20/40mhz-Ce', label: '20/40MHz (Ce)' },
+      { value: '20/40mhz-eC', label: '20/40MHz (eC)' },
+    ];
+    
+    if (bandType === '5ghz' || bandType === 'both') {
+      if (maxW >= 80) {
+        allOptions.push({ value: '20/40/80mhz', label: '20/40/80MHz' });
+      }
+      if (maxW >= 160) {
+        allOptions.push({ value: '20/40/80/160mhz', label: '20/40/80/160MHz' });
+      }
+    }
+    
+    return allOptions.filter(opt => {
+      const val = opt.value.toLowerCase();
+      if (val.includes('160')) return maxW >= 160;
+      if (val.includes('80')) return maxW >= 80;
+      if (val.includes('40')) return maxW >= 40;
+      return true;
+    });
+  };
+
+  const getValidChannelsForWidth = (width: string, bandType: string): number[] => {
+    const widthLower = width.toLowerCase();
+    
+    if (bandType === '2ghz') {
+      if (widthLower === '20mhz') {
+        return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+      } else if (widthLower === '20/40mhz-ce') {
+        return [1, 2, 3, 4, 5, 6, 7, 8, 9];
+      } else if (widthLower === '20/40mhz-ec') {
+        return [5, 6, 7, 8, 9, 10, 11, 12, 13];
+      } else if (widthLower === '20/40mhz') {
+        return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+      } else {
+        return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+      }
+    } else {
+      if (widthLower === '20mhz') {
+        return [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165];
+      } else if (widthLower === '20/40mhz-ce') {
+        return [36, 44, 52, 60, 100, 108, 116, 124, 132, 140, 149, 157];
+      } else if (widthLower === '20/40mhz-ec') {
+        return [40, 48, 56, 64, 104, 112, 120, 128, 136, 144, 153, 161];
+      } else if (widthLower === '20/40mhz') {
+        return [36, 44, 52, 60, 100, 108, 116, 124, 132, 140, 149, 157];
+      } else if (widthLower === '20/40/80mhz') {
+        return [36, 52, 100, 116, 132, 149];
+      }
+      return [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165];
+    }
+  };
+
+  const getChannelWidthDisplayValue = (rawValue: string, band: string): string => {
+    const options = getChannelWidthOptions(band);
+    const match = options.find(opt => opt.value.toLowerCase() === rawValue.toLowerCase());
+    if (match) return match.value;
+    const ceMatch = options.find(opt => opt.value.toLowerCase() === '20/40mhz-ce');
+    if (rawValue.toLowerCase() === '20/40mhz' && ceMatch) return ceMatch.value;
+    const bareCe = options.find(opt => opt.value.toLowerCase() === `${rawValue.toLowerCase()}-ce`);
+    if (bareCe) return bareCe.value;
+    const bareEc = options.find(opt => opt.value.toLowerCase() === `${rawValue.toLowerCase()}-ec`);
+    if (bareEc) return bareEc.value;
+    return options[0]?.value || '20mhz';
+  };
+
+  const getFrequencyOptions = useMemo(() => {
+    const bandVal = iface.band || '';
+    const channelWidth = iface['channel-width'] || '20mhz';
+    const country = (iface as any)['country'] || 'no country set';
+    
+    const bandType = getBandType(bandVal);
+    const validChannels = getValidChannelsForWidth(channelWidth, bandType);
+    
+    let filteredChannels = validChannels;
+    
+    if (country !== 'no country set' && countryFrequencyRules[country]) {
+      const countryRule = countryFrequencyRules[country];
+      const allowedChannels = bandType === '2ghz' ? countryRule.channels24G : countryRule.channels5G;
+      filteredChannels = validChannels.filter(ch => allowedChannels.includes(ch));
+    }
+    
+    const allFrequencies = bandType === '2ghz' ? frequencyOptions24G : 
+                          bandType === '5ghz' ? frequencyOptions5G : 
+                          [...frequencyOptions24G, ...frequencyOptions5G];
+    
+    return allFrequencies.filter(freq => filteredChannels.includes(freq.channel));
+  }, [iface.band, iface['channel-width'], (iface as any)['country']]);
+
+  const parseRates = (rateStr: string | undefined): string[] => {
+    if (!rateStr) return [];
+    return rateStr.split(',').map(r => r.trim()).filter(r => r);
+  };
+
+  const formatRates = (rates: string[]): string => {
+    return rates.join(',');
+  };
+
+  const getRateCheckboxState = (rateStr: string | undefined, rateValue: string): boolean => {
+    const rates = parseRates(rateStr);
+    return rates.some(r => r.toLowerCase() === rateValue.toLowerCase());
+  };
+
+  const updateRate = (field: string, rateValue: string, checked: boolean) => {
+    const currentRates = parseRates(iface[field]);
+    if (checked) {
+      if (!currentRates.some(r => r.toLowerCase() === rateValue.toLowerCase())) {
+        currentRates.push(rateValue);
+      }
+    } else {
+      const idx = currentRates.findIndex(r => r.toLowerCase() === rateValue.toLowerCase());
+      if (idx >= 0) currentRates.splice(idx, 1);
+    }
+    updateField(field, formatRates(currentRates));
+  };
+
+  const updateField = (field: string, value: any) => {
+    const updated = { ...iface, [field]: value };
+    
+    if (field === 'band') {
+      const bandVal = String(value).toLowerCase();
+      if (bandVal.includes('2ghz') || bandVal.includes('2.4') || bandVal === '2ghz-b' || bandVal === '2ghz-g' || bandVal === '2ghz-b/g' || bandVal === '2ghz-b/g/n') {
+        updated.frequency = '2412';
+      } else if (bandVal.includes('5ghz') || bandVal.includes('5.') || bandVal === '5ghz-a' || bandVal === '5ghz-a/n' || bandVal === '5ghz-a/n/ac' || bandVal === '5ghz-a/n/ac-ax') {
+        updated.frequency = '5180';
+      }
+      
+      const bandType = getBandType(String(value));
+      if (bandType === '2ghz') {
+        updated['channel-width'] = '20mhz';
+      } else if (bandType === '5ghz') {
+        updated['channel-width'] = '20mhz';
+      }
+    }
+    
+    if (field === 'channel-width') {
+      const currentFreq = iface.frequency;
+      if (currentFreq) {
+        const currentChannel = frequencyOptions24G.find(f => f.value === currentFreq)?.channel || 
+                              frequencyOptions5G.find(f => f.value === currentFreq)?.channel;
+        if (currentChannel) {
+          const bandType = getBandType(iface.band || '');
+          const validChannels = getValidChannelsForWidth(String(value), bandType);
+          if (!validChannels.includes(currentChannel)) {
+            const newChannel = validChannels[0];
+            const newFreq = frequencyOptions24G.find(f => f.channel === newChannel) || 
+                           frequencyOptions5G.find(f => f.channel === newChannel);
+            if (newFreq) {
+              updated.frequency = newFreq.value;
+            }
+          }
+        }
+      }
+    }
+    
+    if (field === 'country') {
+      const currentFreq = iface.frequency;
+      if (currentFreq && value !== 'no country set') {
+        const currentChannel = frequencyOptions24G.find(f => f.value === currentFreq)?.channel || 
+                              frequencyOptions5G.find(f => f.value === currentFreq)?.channel;
+        if (currentChannel && countryFrequencyRules[value]) {
+          const bandType = getBandType(iface.band || '');
+          const allowedChannels = bandType === '2ghz' ? countryFrequencyRules[value].channels24G : countryFrequencyRules[value].channels5G;
+          if (!allowedChannels.includes(currentChannel)) {
+            const newChannel = allowedChannels[0];
+            const newFreq = frequencyOptions24G.find(f => f.channel === newChannel) || 
+                           frequencyOptions5G.find(f => f.channel === newChannel);
+            if (newFreq) {
+              updated.frequency = newFreq.value;
+            }
+          }
+        }
+      }
+    }
+    
+    onChange(updated);
+  };
+
+  const renderGeneralTab = () => (
+    <div className={styles.tabContent}>
+      <div className={styles.formSection}>
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>名称</label>
+            <Input
+              value={iface.name}
+              onChange={(e) => updateField('name', e.target.value)}
+              placeholder="接口名称"
+            />
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>类型</label>
+            <Input value={iface.type || '无线'} disabled className={styles.inputDisabled} />
+          </div>
+        </div>
+
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>MTU</label>
+            <Input
+              value={(iface as any)['mtu'] || '1500'}
+              onChange={(e) => updateField('mtu', e.target.value)}
+              placeholder="1500"
+            />
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>L2 MTU</label>
+            <Input
+              value={(iface as any)['l2mtu'] || '1600'}
+              onChange={(e) => updateField('l2mtu', e.target.value)}
+              placeholder="1600"
+            />
+          </div>
+        </div>
+
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>MAC 地址</label>
+            <Input value={iface.mac_address || ''} disabled className={styles.inputDisabled} />
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>ARP</label>
+            <Select
+              value={(iface as any)['arp'] || 'enabled'}
+              onChange={(value) => updateField('arp', value)}
+              style={{ width: '100%' }}
+            >
+              <Option value="enabled">启用</Option>
+              <Option value="disabled">禁用</Option>
+              <Option value="local-proxy-arp">本地代理 ARP</Option>
+              <Option value="proxy-arp">代理 ARP</Option>
+              <Option value="reply-only">仅回复</Option>
+            </Select>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderWirelessTab = () => (
+    <div className={styles.tabContent}>
+      <div className={styles.formSection}>
+        <h3 className={styles.sectionTitle}>基本配置</h3>
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>模式</label>
+            <Select
+              value={iface.mode || 'ap-bridge'}
+              onChange={(value) => updateField('mode', value)}
+              style={{ width: '100%' }}
+            >
+              <Option value="ap-bridge">AP 桥接</Option>
+              <Option value="bridge">桥接</Option>
+              <Option value="station">站点</Option>
+              <Option value="station-bridge">站点桥接</Option>
+              <Option value="station-pseudobridge">站点伪桥接</Option>
+              <Option value="station-wds">站点 WDS</Option>
+            </Select>
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>频段</label>
+            <Select
+              value={iface.band || '2ghz-b/g/n'}
+              onChange={(value) => updateField('band', value)}
+              style={{ width: '100%' }}
+            >
+              {bandOptions.is24G && bandOptions.options24G.map((opt) => (
+                <Option key={opt} value={opt}>
+                  {opt === '2ghz-onlyb' && '2GHz-only-B'}
+                  {opt === '2ghz-onlyg' && '2GHz-only-G'}
+                  {opt === '2ghz-b/g' && '2GHz-B/G'}
+                  {opt === '2ghz-onlyn' && '2GHz-only-N'}
+                  {opt === '2ghz-g/n' && '2GHz-G/N'}
+                  {opt === '2ghz-b/g/n' && '2GHz-B/G/N'}
+                </Option>
+              ))}
+              {bandOptions.is5G && bandOptions.options5G.map((opt) => (
+                <Option key={opt} value={opt}>
+                  {opt === '5ghz-onlya' && '5GHz-only-A'}
+                  {opt === '5ghz-onlyn' && '5GHz-only-N'}
+                  {opt === '5ghz-a/n' && '5GHz-A/N'}
+                  {opt === '5ghz-onlyac' && '5GHz-only-AC'}
+                  {opt === '5ghz-n/ac' && '5GHz-N/AC'}
+                  {opt === '5ghz-a/n/ac' && '5GHz-A/N/AC'}
+                  {opt === '5ghz-onlyax' && '5GHz-only-AX'}
+                  {opt === '5ghz-a/n/ac-ax' && '5GHz-A/N/AC/AX'}
+                </Option>
+              ))}
+            </Select>
+          </div>
+        </div>
+
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>信道宽度</label>
+            <Select
+              value={getChannelWidthDisplayValue(iface['channel-width'] || '20mhz', iface.band || '2ghz-b/g/n')}
+              onChange={(value) => updateField('channel-width', value)}
+              style={{ width: '100%' }}
+            >
+              {getChannelWidthOptions(iface.band || '2ghz-b/g/n').map((opt) => (
+                <Option key={opt.value} value={opt.value}>{opt.label}</Option>
+              ))}
+            </Select>
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>频率</label>
+            <Select
+              value={iface.frequency || ''}
+              onChange={(value) => updateField('frequency', value)}
+              style={{ width: '100%' }}
+              showSearch
+              placeholder="选择频率"
+            >
+              {getFrequencyOptions.map((opt) => (
+                <Option key={opt.value} value={opt.value}>{opt.label}</Option>
+              ))}
+            </Select>
+          </div>
+        </div>
+
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>SSID</label>
+            <Input
+              value={iface.ssid || ''}
+              onChange={(e) => updateField('ssid', e.target.value)}
+              placeholder="无线网络名称"
+            />
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>无线电名称</label>
+            <Input
+              value={(iface as any)['radio-name'] || ''}
+              onChange={(e) => updateField('radio-name', e.target.value)}
+              placeholder="无线电名称"
+            />
+          </div>
+        </div>
+
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>扫描列表</label>
+            <Input
+              value={(iface as any)['scan-list'] || 'default'}
+              onChange={(e) => updateField('scan-list', e.target.value)}
+              placeholder="default"
+            />
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>无线协议</label>
+            <Select
+              value={iface['wireless-protocol'] || '802.11'}
+              onChange={(value) => updateField('wireless-protocol', value)}
+              style={{ width: '100%' }}
+            >
+              <Option value="802.11">802.11</Option>
+              <Option value="nv2">NV2</Option>
+              <Option value="nv2-nstreme">NV2-Nstreme</Option>
+              <Option value="nstreme">Nstreme</Option>
+            </Select>
+          </div>
+        </div>
+      </div>
+
+      <div className={styles.formSection}>
+        <h3 className={styles.sectionTitle}>高级无线配置</h3>
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>频率模式</label>
+            <Select
+              value={(iface as any)['frequency-mode'] || 'regulatory-domain'}
+              onChange={(value) => updateField('frequency-mode', value)}
+              style={{ width: '100%' }}
+            >
+              <Option value="regulatory-domain">法规域</Option>
+              <Option value="superchannel">超级信道</Option>
+            </Select>
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>国家</label>
+            <Select
+              value={(iface as any)['country'] || 'no country set'}
+              onChange={(value) => updateField('country', value)}
+              style={{ width: '100%' }}
+              showSearch
+              placeholder="选择国家"
+              optionFilterProp="children"
+            >
+              {countryList.map((country) => (
+                <Option key={country.value} value={country.value}>{country.label}</Option>
+              ))}
+            </Select>
+          </div>
+        </div>
+
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>安装环境</label>
+            <Select
+              value={(iface as any)['installation'] || 'any'}
+              onChange={(value) => updateField('installation', value)}
+              style={{ width: '100%' }}
+            >
+              <Option value="any">任意</Option>
+              <Option value="indoor">室内</Option>
+              <Option value="outdoor">室外</Option>
+            </Select>
+          </div>
+        </div>
+      </div>
+
+      <div className={styles.formSection}>
+        <h3 className={styles.sectionTitle}>速率限制</h3>
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>AP下行限速</label>
+            <Input
+              value={(iface as any)['default-ap-tx-limit'] || ''}
+              onChange={(e) => updateField('default-ap-tx-limit', e.target.value)}
+              placeholder="bps"
+              addonAfter="bps"
+            />
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>终端上行限速</label>
+            <Input
+              value={(iface as any)['default-client-tx-limit'] || ''}
+              onChange={(e) => updateField('default-client-tx-limit', e.target.value)}
+              placeholder="bps"
+              addonAfter="bps"
+            />
+          </div>
+        </div>
+
+        <div className={styles.checkboxGroup}>
+          <Checkbox
+            checked={(iface as any)['default-authenticate'] === 'yes'}
+            onChange={(e) => updateField('default-authenticate', e.target.checked ? 'yes' : 'no')}
+          >
+            默认认证
+          </Checkbox>
+          <Checkbox
+            checked={(iface as any)['default-forwarding'] === 'yes'}
+            onChange={(e) => updateField('default-forwarding', e.target.checked ? 'yes' : 'no')}
+          >
+            默认转发
+          </Checkbox>
+          <Checkbox
+            checked={iface['hide-ssid'] === 'yes'}
+            onChange={(e) => updateField('hide-ssid', e.target.checked ? 'yes' : 'no')}
+          >
+            隐藏 SSID
+          </Checkbox>
+        </div>
+      </div>
+
+      <div className={styles.formSection}>
+        <h3 className={styles.sectionTitle}>组播</h3>
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>组播助手</label>
+            <Select
+              value={(iface as any)['multicast-helper'] || 'default'}
+              onChange={(value) => updateField('multicast-helper', value)}
+              style={{ width: '100%' }}
+            >
+              <Option value="default">默认</Option>
+              <Option value="disabled">禁用</Option>
+              <Option value="full">完全</Option>
+            </Select>
+          </div>
+        </div>
+
+        <div className={styles.checkboxGroup}>
+          <Checkbox
+            checked={(iface as any)['multicast-buffering'] === 'enabled'}
+            onChange={(e) => updateField('multicast-buffering', e.target.checked ? 'enabled' : 'disabled')}
+          >
+            组播缓冲
+          </Checkbox>
+          <Checkbox
+            checked={(iface as any)['keepalive-frames'] === 'enabled'}
+            onChange={(e) => updateField('keepalive-frames', e.target.checked ? 'enabled' : 'disabled')}
+          >
+            保活帧
+          </Checkbox>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderDataRatesTab = () => (
+    <div className={styles.tabContent}>
+      <div className={styles.formSection}>
+        <h3 className={styles.sectionTitle}>速率</h3>
+        <div className={styles.radioGroup}>
+          <span className={styles.radioLabel}>速率集:</span>
+          <Radio.Group
+            value={(iface as any)['rate-set'] || 'default'}
+            onChange={(e) => updateField('rate-set', e.target.value)}
+          >
+            <Radio value="default">默认</Radio>
+            <Radio value="configured">自定义</Radio>
+          </Radio.Group>
+        </div>
+
+        <div className={styles.rateSection}>
+          <div className={styles.rateRow}>
+            <span className={styles.rateLabel}>B 支持速率:</span>
+            <div className={styles.checkboxInlineGroup}>
+              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-b'], '1Mbps')} onChange={(e) => updateRate('supported-rates-b', '1Mbps', e.target.checked)}>1Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-b'], '2Mbps')} onChange={(e) => updateRate('supported-rates-b', '2Mbps', e.target.checked)}>2Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-b'], '5.5Mbps')} onChange={(e) => updateRate('supported-rates-b', '5.5Mbps', e.target.checked)}>5.5Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-b'], '11Mbps')} onChange={(e) => updateRate('supported-rates-b', '11Mbps', e.target.checked)}>11Mbps</Checkbox>
+            </div>
+          </div>
+
+          <div className={styles.rateRow}>
+            <span className={styles.rateLabel}>A/G 支持速率:</span>
+            <div className={styles.checkboxInlineGroup}>
+              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '6Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '6Mbps', e.target.checked)}>6Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '9Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '9Mbps', e.target.checked)}>9Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '12Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '12Mbps', e.target.checked)}>12Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '18Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '18Mbps', e.target.checked)}>18Mbps</Checkbox>
+            </div>
+          </div>
+
+          <div className={styles.rateRow}>
+            <span className={styles.rateLabel}></span>
+            <div className={styles.checkboxInlineGroup}>
+              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '24Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '24Mbps', e.target.checked)}>24Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '36Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '36Mbps', e.target.checked)}>36Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '48Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '48Mbps', e.target.checked)}>48Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '54Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '54Mbps', e.target.checked)}>54Mbps</Checkbox>
+            </div>
+          </div>
+
+          <div className={styles.rateRow}>
+            <span className={styles.rateLabel}>B 基本速率:</span>
+            <div className={styles.checkboxInlineGroup}>
+              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-b'], '1Mbps')} onChange={(e) => updateRate('basic-rates-b', '1Mbps', e.target.checked)}>1Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-b'], '2Mbps')} onChange={(e) => updateRate('basic-rates-b', '2Mbps', e.target.checked)}>2Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-b'], '5.5Mbps')} onChange={(e) => updateRate('basic-rates-b', '5.5Mbps', e.target.checked)}>5.5Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-b'], '11Mbps')} onChange={(e) => updateRate('basic-rates-b', '11Mbps', e.target.checked)}>11Mbps</Checkbox>
+            </div>
+          </div>
+
+          <div className={styles.rateRow}>
+            <span className={styles.rateLabel}>A/G 基本速率:</span>
+            <div className={styles.checkboxInlineGroup}>
+              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '6Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '6Mbps', e.target.checked)}>6Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '9Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '9Mbps', e.target.checked)}>9Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '12Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '12Mbps', e.target.checked)}>12Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '18Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '18Mbps', e.target.checked)}>18Mbps</Checkbox>
+            </div>
+          </div>
+
+          <div className={styles.rateRow}>
+            <span className={styles.rateLabel}></span>
+            <div className={styles.checkboxInlineGroup}>
+              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '24Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '24Mbps', e.target.checked)}>24Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '36Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '36Mbps', e.target.checked)}>36Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '48Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '48Mbps', e.target.checked)}>48Mbps</Checkbox>
+              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '54Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '54Mbps', e.target.checked)}>54Mbps</Checkbox>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderAdvancedTab = () => (
+    <div className={styles.tabContent}>
+      <div className={styles.formSection}>
+        <h3 className={styles.sectionTitle}>距离与天线</h3>
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>区域</label>
+            <Input
+              value={(iface as any)['area'] || ''}
+              onChange={(e) => updateField('area', e.target.value)}
+              placeholder="区域"
+            />
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>最大站点数</label>
+            <Input
+              value={(iface as any)['max-station-count'] || '2007'}
+              onChange={(e) => updateField('max-station-count', e.target.value)}
+              placeholder="2007"
+            />
+          </div>
+        </div>
+
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>突发时间</label>
+            <Input
+              value={(iface as any)['burst-time'] || ''}
+              onChange={(e) => updateField('burst-time', e.target.value)}
+              placeholder="us"
+              addonAfter="us"
+            />
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>硬件重试次数</label>
+            <Input
+              value={(iface as any)['hw-retries'] || '7'}
+              onChange={(e) => updateField('hw-retries', e.target.value)}
+              placeholder="7"
+            />
+          </div>
+        </div>
+
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>自适应噪声免疫</label>
+            <Select
+              value={(iface as any)['adaptive-noise-immunity'] || 'none'}
+              onChange={(value) => updateField('adaptive-noise-immunity', value)}
+              style={{ width: '100%' }}
+            >
+              <Option value="none">无</Option>
+              <Option value="ap-mode">AP 模式</Option>
+              <Option value="client-mode">客户端模式</Option>
+              <Option value="ap-and-client-mode">AP 和客户端模式</Option>
+            </Select>
+          </div>
+        </div>
+      </div>
+
+      <div className={styles.formSection}>
+        <h3 className={styles.sectionTitle}>前导码与认证</h3>
+        <div className={styles.radioGroup}>
+          <span className={styles.radioLabel}>前导码模式:</span>
+          <Radio.Group
+            value={(iface as any)['preamble-mode'] || 'both'}
+            onChange={(e) => updateField('preamble-mode', e.target.value)}
+          >
+            <Radio value="long">长</Radio>
+            <Radio value="short">短</Radio>
+            <Radio value="both">两者</Radio>
+          </Radio.Group>
+        </div>
+
+        <div className={styles.checkboxGroup}>
+          <Checkbox
+            checked={(iface as any)['allow-shared-key'] === 'yes'}
+            onChange={(e) => updateField('allow-shared-key', e.target.checked ? 'yes' : 'no')}
+          >
+            允许共享密钥
+          </Checkbox>
+        </div>
+      </div>
+
+      <div className={styles.formSection}>
+        <h3 className={styles.sectionTitle}>超时与统计</h3>
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>断开超时</label>
+            <Input
+              value={(iface as any)['disconnect-timeout'] || '00:00:03'}
+              onChange={(e) => updateField('disconnect-timeout', e.target.value)}
+              placeholder="00:00:03"
+            />
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>失败重试时间</label>
+            <Input
+              value={(iface as any)['on-fail-retry-time'] || '0.10'}
+              onChange={(e) => updateField('on-fail-retry-time', e.target.value)}
+              placeholder="0.10"
+              addonAfter="s"
+            />
+          </div>
+        </div>
+
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>更新统计间隔</label>
+            <Input
+              value={(iface as any)['update-stats-interval'] || ''}
+              onChange={(e) => updateField('update-stats-interval', e.target.value)}
+              placeholder="s"
+              addonAfter="s"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderTxPowerTab = () => (
+    <div className={styles.tabContent}>
+      <div className={styles.formSection}>
+        <h3 className={styles.sectionTitle}>发射功率配置</h3>
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>发射功率模式</label>
+            <Select
+              value={(iface as any)['tx-power-mode'] || 'default'}
+              onChange={(value) => updateField('tx-power-mode', value)}
+              style={{ width: '100%' }}
+            >
+              <Option value="default">默认</Option>
+              <Option value="all rates fixed">所有速率固定</Option>
+              <Option value="card rates">网卡速率</Option>
+              <Option value="manual">手动</Option>
+            </Select>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderPlaceholderTab = (tabName: string) => (
+    <div className={styles.tabContent}>
+      <div className={styles.emptyState}>
+        <p>{tabName} 配置选项</p>
+      </div>
+    </div>
+  );
+
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case 'general':
+        return renderGeneralTab();
+      case 'wireless':
+        return renderWirelessTab();
+      case 'datarates':
+        return renderDataRatesTab();
+      case 'advanced':
+        return renderAdvancedTab();
+      case 'ht':
+        return renderPlaceholderTab('HT');
+      case 'wds':
+        return renderPlaceholderTab('WDS');
+      case 'nstreme':
+        return renderPlaceholderTab('Nstreme');
+      case 'txpower':
+        return renderTxPowerTab();
+      default:
+        return renderGeneralTab();
+    }
+  };
+
+  return (
+    <div className={styles.container}>
+      <div className={styles.tabBar}>
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            className={`${styles.tabButton} ${activeTab === tab.key ? styles.tabButtonActive : ''}`}
+            onClick={() => setActiveTab(tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      <div className={styles.tabPanel}>
+        {renderTabContent()}
+      </div>
+      <div className={styles.statusBar}>
+        <span className={styles.statusItem}>
+          <span className={styles.statusLabel}>已启用:</span>
+          <span className={styles.statusValue}>{iface.disabled ? '否' : '是'}</span>
+        </span>
+        <span className={styles.statusItem}>
+          <span className={styles.statusLabel}>运行中:</span>
+          <span className={styles.statusValue}>{iface.running ? '是' : '否'}</span>
+        </span>
+        <span className={styles.statusItem}>
+          <span className={styles.statusLabel}>从属:</span>
+          <span className={styles.statusValue}>否</span>
+        </span>
+        <span className={styles.statusItem}>
+          <span className={styles.statusLabel}>运行 AP:</span>
+          <span className={styles.statusValue}>{iface.mode === 'ap-bridge' ? '是' : '否'}</span>
+        </span>
+      </div>
+    </div>
+  );
+};

@@ -1,0 +1,37 @@
+.container { padding: var(--space-xl); display: flex; flex-direction: column; height: calc(100vh - 120px); }
+
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-lg); }
+
+.title { font-size: var(--font-size-lg); font-weight: 600; color: var(--color-text-primary); margin: 0; }
+
+.controls { display: flex; align-items: center; gap: var(--space-lg); }
+
+.autoScrollLabel { display: flex; align-items: center; gap: var(--space-sm); cursor: pointer; font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.autoScrollLabel input { width: 16px; height: 16px; cursor: pointer; }
+
+.logCount { font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+
+.tableContainer { flex: 1; overflow: auto; border: 1px solid var(--color-border-primary); border-radius: var(--radius-md); background: var(--color-bg-primary); }
+
+.table { width: 100%; border-collapse: collapse; }
+.table th {
+  padding: var(--space-md); text-align: left; font-size: 12px; font-weight: 600;
+  color: var(--color-text-secondary); border-bottom: 1px solid var(--color-border-primary);
+  text-transform: uppercase; letter-spacing: 0.5px; background: var(--color-bg-secondary);
+  position: sticky; top: 0; z-index: 1;
+}
+.table td { padding: var(--space-md); border-bottom: 1px solid var(--color-border-primary); font-size: var(--font-size-xs); color: var(--color-text-primary); }
+.table tr:hover td { background: rgba(255, 107, 53, 0.05); }
+.mono { font-family: var(--font-family-mono); }
+.index { color: var(--color-text-secondary); text-align: center; font-weight: 500; }
+
+.topicError { background: rgba(231, 76, 60, 0.15); color: #e74c3c; padding: 2px 8px; border-radius: 4px; font-weight: 500; }
+.topicWarning { background: rgba(241, 196, 15, 0.15); color: #f39c12; padding: 2px 8px; border-radius: 4px; font-weight: 500; }
+.topicInfo { background: rgba(52, 152, 219, 0.15); color: #3498db; padding: 2px 8px; border-radius: 4px; font-weight: 500; }
+.topicDebug { background: rgba(149, 165, 166, 0.15); color: #95a5a6; padding: 2px 8px; border-radius: 4px; font-weight: 500; }
+.topicDefault { background: rgba(108, 117, 125, 0.1); color: #6c757d; padding: 2px 8px; border-radius: 4px; font-weight: 500; }
+
+.rowError { background: rgba(231, 76, 60, 0.05); }
+.rowError:hover td { background: rgba(231, 76, 60, 0.1) !important; }
+.rowWarning { background: rgba(241, 196, 15, 0.05); }
+.rowWarning:hover td { background: rgba(241, 196, 15, 0.1) !important; }

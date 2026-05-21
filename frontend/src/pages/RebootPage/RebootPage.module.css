@@ -1,0 +1,45 @@
+.container {
+  padding: 24px;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.title {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 24px;
+  color: #ffffff;
+}
+
+.card {
+  background: #1a1a1a;
+  border: 1px solid #2d2d2d;
+  border-radius: 8px;
+  padding: 24px;
+  text-align: center;
+}
+
+.iconWrapper {
+  margin-bottom: 16px;
+}
+
+.icon {
+  font-size: 64px;
+  color: #ff6b35;
+}
+
+.description {
+  font-size: 18px;
+  color: #a0a0a0;
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
+.warning {
+  font-size: 14px;
+  color: #f59e0b;
+  margin-bottom: 24px;
+  padding: 12px;
+  background: rgba(245, 158, 11, 0.1);
+  border-radius: 6px;
+}
