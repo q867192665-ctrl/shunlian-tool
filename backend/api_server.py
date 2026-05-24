@@ -6,6 +6,7 @@
 """
 
 import os
+import re
 import glob
 import socket
 import struct
@@ -1376,6 +1377,8 @@ class WirelessInterfaceUpdateRequest(BaseModel):
     hide_ssid: str = ""
     tx_power: str = ""
     tx_power_mode: str = ""
+    antenna_gain: str = ""
+    antenna_mode: str = ""
     rate_set: str = ""
     wps_mode: str = ""
     arp: str = ""
@@ -1564,6 +1567,10 @@ async def update_wireless_interface(request: WirelessInterfaceUpdateRequest):
             cmd.append(f'=tx-power={request.tx_power}')
         if request.tx_power_mode:
             cmd.append(f'=tx-power-mode={request.tx_power_mode}')
+        if request.antenna_gain:
+            cmd.append(f'=antenna-gain={request.antenna_gain}')
+        if request.antenna_mode:
+            cmd.append(f'=antenna-mode={request.antenna_mode}')
         if request.rate_set:
             cmd.append(f'=rate-set={request.rate_set}')
         if request.wps_mode:
@@ -2521,6 +2528,64 @@ async def clear_install_marker():
     except Exception as e:
         logger.error(f"删除安装标记文件失败: {e}")
         return {"status": "error", "message": str(e)}
+
+
+def _parse_current_version():
+    """从更新日志中解析当前版本号"""
+    try:
+        changelog_path = os.path.join(get_base_dir(), '更新日志.md')
+        if os.path.exists(changelog_path):
+            with open(changelog_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    match = re.match(r'^##\s+v?(\d+\.\d+\.\d+)', line)
+                    if match:
+                        return match.group(1)
+    except Exception:
+        pass
+    return '1.0.0'
+
+
+@app.get("/api/check-update")
+async def check_update():
+    """检查程序更新，从远程服务器获取最新版本信息"""
+    import urllib.request
+    import urllib.error
+
+    current_version = _parse_current_version()
+
+    try:
+        url = 'http://yaohu.dynv6.net:32999/version.json'
+        req = urllib.request.Request(url, headers={'User-Agent': 'ShunLian-Update-Check/1.0'})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+
+        remote_version = data.get('version', '')
+        changelog = data.get('changelog', '')
+        download_url = data.get('download_url', '')
+
+        if not remote_version:
+            return {"has_update": False, "current_version": current_version, "message": "远程版本信息格式错误"}
+
+        # 比较版本号
+        def version_tuple(v):
+            parts = v.replace('v', '').split('.')
+            return tuple(int(p) for p in parts)
+
+        has_update = version_tuple(remote_version) > version_tuple(current_version)
+
+        return {
+            "has_update": has_update,
+            "current_version": current_version,
+            "latest_version": remote_version,
+            "changelog": changelog,
+            "download_url": download_url,
+        }
+    except urllib.error.URLError as e:
+        logger.warning(f"检查更新失败（网络错误）: {e}")
+        return {"has_update": False, "current_version": current_version, "message": "无法连接更新服务器"}
+    except Exception as e:
+        logger.warning(f"检查更新失败: {e}")
+        return {"has_update": False, "current_version": current_version, "message": f"检查更新失败: {e}"}
 
 
 @app.post("/api/system/reboot")

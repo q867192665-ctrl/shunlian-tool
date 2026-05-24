@@ -8,6 +8,7 @@ import { Sidebar } from './components/organisms/Sidebar/Sidebar';
 import { Header } from './components/organisms/Header/Header';
 import { ReconnectModal } from './components/organisms/ReconnectModal/ReconnectModal';
 import { ChangelogModal } from './components/organisms/ChangelogModal/ChangelogModal';
+import { UpdateModal } from './components/organisms/UpdateModal/UpdateModal';
 import { LoginPage } from './pages/LoginPage/LoginPage';
 import { DashboardPage } from './pages/DashboardPage/DashboardPage';
 import { BridgePage } from './pages/BridgePage/BridgePage';
@@ -37,6 +38,8 @@ const AppContent: React.FC = () => {
   const [activeNav, setActiveNav] = useState('dashboard');
   const [networkTargetTab, setNetworkTargetTab] = useState<string | null>(null);
   const [changelogVisible, setChangelogVisible] = useState(false);
+  const [updateVisible, setUpdateVisible] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState({ currentVersion: '', latestVersion: '', changelog: '', downloadUrl: '' });
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -66,6 +69,25 @@ const AppContent: React.FC = () => {
       checkVersion();
     }
   }, [isLoggedIn]);
+
+  useEffect(() => {
+    const checkForUpdate = async () => {
+      try {
+        const res = await fetch('/api/check-update');
+        const data = await res.json();
+        if (data.has_update) {
+          setUpdateInfo({
+            currentVersion: data.current_version || '',
+            latestVersion: data.latest_version || '',
+            changelog: data.changelog || '',
+            downloadUrl: data.download_url || '',
+          });
+          setUpdateVisible(true);
+        }
+      } catch (_) {}
+    };
+    checkForUpdate();
+  }, []);
 
   const handleNavigate = (nav: string) => {
     setActiveNav(nav);
@@ -140,6 +162,14 @@ const AppContent: React.FC = () => {
       <ChangelogModal
         visible={changelogVisible}
         onClose={() => setChangelogVisible(false)}
+      />
+      <UpdateModal
+        visible={updateVisible}
+        currentVersion={updateInfo.currentVersion}
+        latestVersion={updateInfo.latestVersion}
+        changelog={updateInfo.changelog}
+        downloadUrl={updateInfo.downloadUrl}
+        onClose={() => setUpdateVisible(false)}
       />
     </div>
   );

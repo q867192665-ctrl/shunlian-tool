@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Input, Select, Checkbox, Radio } from 'antd';
+import { DownOutlined, RightOutlined } from '@ant-design/icons';
 import styles from './WinboxEditor.module.css';
 
 const { TextArea } = Input;
@@ -478,6 +479,11 @@ const countryFrequencyRules: { [key: string]: { channels24G: number[], channels5
 
 export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, onChange, routerIp }) => {
   const [activeTab, setActiveTab] = useState('general');
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
+    'advanced': true,
+    'rate-limit': true,
+    'multicast': true,
+  });
   const [is24G, setIs24G] = useState(true);
   const [is5G, setIs5G] = useState(true);
   const [freqInfoLoading, setFreqInfoLoading] = useState(false);
@@ -798,6 +804,10 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
     updateField(field, formatRates(currentRates));
   };
 
+  const toggleSection = (key: string) => {
+    setCollapsedSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
   const updateField = (field: string, value: any) => {
     const updated = { ...iface, [field]: value };
     
@@ -1048,7 +1058,12 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
       </div>
 
       <div className={styles.formSection}>
-        <h3 className={styles.sectionTitle}>高级无线配置</h3>
+        <h3 className={styles.sectionTitle} onClick={() => toggleSection('advanced')} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {collapsedSections['advanced'] ? <RightOutlined style={{ fontSize: 12 }} /> : <DownOutlined style={{ fontSize: 12 }} />}
+          高级无线配置
+        </h3>
+        {!collapsedSections['advanced'] && (
+        <>
         <div className={styles.formRow}>
           <div className={styles.formGroup}>
             <label className={styles.formLabel}>频率模式</label>
@@ -1092,10 +1107,17 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
             </Select>
           </div>
         </div>
+        </>
+        )}
       </div>
 
       <div className={styles.formSection}>
-        <h3 className={styles.sectionTitle}>速率限制</h3>
+        <h3 className={styles.sectionTitle} onClick={() => toggleSection('rate-limit')} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {collapsedSections['rate-limit'] ? <RightOutlined style={{ fontSize: 12 }} /> : <DownOutlined style={{ fontSize: 12 }} />}
+          速率限制
+        </h3>
+        {!collapsedSections['rate-limit'] && (
+        <>
         <div className={styles.formRow}>
           <div className={styles.formGroup}>
             <label className={styles.formLabel}>AP下行限速</label>
@@ -1137,10 +1159,17 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
             隐藏 SSID
           </Checkbox>
         </div>
+        </>
+        )}
       </div>
 
       <div className={styles.formSection}>
-        <h3 className={styles.sectionTitle}>组播</h3>
+        <h3 className={styles.sectionTitle} onClick={() => toggleSection('multicast')} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {collapsedSections['multicast'] ? <RightOutlined style={{ fontSize: 12 }} /> : <DownOutlined style={{ fontSize: 12 }} />}
+          组播
+        </h3>
+        {!collapsedSections['multicast'] && (
+        <>
         <div className={styles.formRow}>
           <div className={styles.formGroup}>
             <label className={styles.formLabel}>组播助手</label>
@@ -1170,11 +1199,15 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
             保活帧
           </Checkbox>
         </div>
+        </>
+        )}
       </div>
     </div>
   );
 
-  const renderDataRatesTab = () => (
+  const renderDataRatesTab = () => {
+    const isRateDefault = ((iface as any)['rate-set'] || 'default') === 'default';
+    return (
     <div className={styles.tabContent}>
       <div className={styles.formSection}>
         <h3 className={styles.sectionTitle}>速率</h3>
@@ -1189,70 +1222,71 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
           </Radio.Group>
         </div>
 
-        <div className={styles.rateSection}>
+        <div className={styles.rateSection} style={isRateDefault ? { opacity: 0.5, pointerEvents: 'none' } : undefined}>
           <div className={styles.rateRow}>
             <span className={styles.rateLabel}>B 支持速率:</span>
             <div className={styles.checkboxInlineGroup}>
-              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-b'], '1Mbps')} onChange={(e) => updateRate('supported-rates-b', '1Mbps', e.target.checked)}>1Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-b'], '2Mbps')} onChange={(e) => updateRate('supported-rates-b', '2Mbps', e.target.checked)}>2Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-b'], '5.5Mbps')} onChange={(e) => updateRate('supported-rates-b', '5.5Mbps', e.target.checked)}>5.5Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-b'], '11Mbps')} onChange={(e) => updateRate('supported-rates-b', '11Mbps', e.target.checked)}>11Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['supported-rates-b'], '1Mbps')} onChange={(e) => updateRate('supported-rates-b', '1Mbps', e.target.checked)}>1Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['supported-rates-b'], '2Mbps')} onChange={(e) => updateRate('supported-rates-b', '2Mbps', e.target.checked)}>2Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['supported-rates-b'], '5.5Mbps')} onChange={(e) => updateRate('supported-rates-b', '5.5Mbps', e.target.checked)}>5.5Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['supported-rates-b'], '11Mbps')} onChange={(e) => updateRate('supported-rates-b', '11Mbps', e.target.checked)}>11Mbps</Checkbox>
             </div>
           </div>
 
           <div className={styles.rateRow}>
             <span className={styles.rateLabel}>A/G 支持速率:</span>
             <div className={styles.checkboxInlineGroup}>
-              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '6Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '6Mbps', e.target.checked)}>6Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '9Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '9Mbps', e.target.checked)}>9Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '12Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '12Mbps', e.target.checked)}>12Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '18Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '18Mbps', e.target.checked)}>18Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '6Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '6Mbps', e.target.checked)}>6Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '9Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '9Mbps', e.target.checked)}>9Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '12Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '12Mbps', e.target.checked)}>12Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '18Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '18Mbps', e.target.checked)}>18Mbps</Checkbox>
             </div>
           </div>
 
           <div className={styles.rateRow}>
             <span className={styles.rateLabel}></span>
             <div className={styles.checkboxInlineGroup}>
-              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '24Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '24Mbps', e.target.checked)}>24Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '36Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '36Mbps', e.target.checked)}>36Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '48Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '48Mbps', e.target.checked)}>48Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '54Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '54Mbps', e.target.checked)}>54Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '24Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '24Mbps', e.target.checked)}>24Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '36Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '36Mbps', e.target.checked)}>36Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '48Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '48Mbps', e.target.checked)}>48Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['supported-rates-a/g'], '54Mbps')} onChange={(e) => updateRate('supported-rates-a/g', '54Mbps', e.target.checked)}>54Mbps</Checkbox>
             </div>
           </div>
 
           <div className={styles.rateRow}>
             <span className={styles.rateLabel}>B 基本速率:</span>
             <div className={styles.checkboxInlineGroup}>
-              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-b'], '1Mbps')} onChange={(e) => updateRate('basic-rates-b', '1Mbps', e.target.checked)}>1Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-b'], '2Mbps')} onChange={(e) => updateRate('basic-rates-b', '2Mbps', e.target.checked)}>2Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-b'], '5.5Mbps')} onChange={(e) => updateRate('basic-rates-b', '5.5Mbps', e.target.checked)}>5.5Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-b'], '11Mbps')} onChange={(e) => updateRate('basic-rates-b', '11Mbps', e.target.checked)}>11Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['basic-rates-b'], '1Mbps')} onChange={(e) => updateRate('basic-rates-b', '1Mbps', e.target.checked)}>1Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['basic-rates-b'], '2Mbps')} onChange={(e) => updateRate('basic-rates-b', '2Mbps', e.target.checked)}>2Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['basic-rates-b'], '5.5Mbps')} onChange={(e) => updateRate('basic-rates-b', '5.5Mbps', e.target.checked)}>5.5Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['basic-rates-b'], '11Mbps')} onChange={(e) => updateRate('basic-rates-b', '11Mbps', e.target.checked)}>11Mbps</Checkbox>
             </div>
           </div>
 
           <div className={styles.rateRow}>
             <span className={styles.rateLabel}>A/G 基本速率:</span>
             <div className={styles.checkboxInlineGroup}>
-              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '6Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '6Mbps', e.target.checked)}>6Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '9Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '9Mbps', e.target.checked)}>9Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '12Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '12Mbps', e.target.checked)}>12Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '18Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '18Mbps', e.target.checked)}>18Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '6Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '6Mbps', e.target.checked)}>6Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '9Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '9Mbps', e.target.checked)}>9Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '12Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '12Mbps', e.target.checked)}>12Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '18Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '18Mbps', e.target.checked)}>18Mbps</Checkbox>
             </div>
           </div>
 
           <div className={styles.rateRow}>
             <span className={styles.rateLabel}></span>
             <div className={styles.checkboxInlineGroup}>
-              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '24Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '24Mbps', e.target.checked)}>24Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '36Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '36Mbps', e.target.checked)}>36Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '48Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '48Mbps', e.target.checked)}>48Mbps</Checkbox>
-              <Checkbox checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '54Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '54Mbps', e.target.checked)}>54Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '24Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '24Mbps', e.target.checked)}>24Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '36Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '36Mbps', e.target.checked)}>36Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '48Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '48Mbps', e.target.checked)}>48Mbps</Checkbox>
+              <Checkbox disabled={isRateDefault} checked={getRateCheckboxState((iface as any)['basic-rates-a/g'], '54Mbps')} onChange={(e) => updateRate('basic-rates-a/g', '54Mbps', e.target.checked)}>54Mbps</Checkbox>
             </div>
           </div>
         </div>
       </div>
     </div>
-  );
+    );
+  };
 
   const renderAdvancedTab = () => (
     <div className={styles.tabContent}>
@@ -1375,7 +1409,10 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
     </div>
   );
 
-  const renderTxPowerTab = () => (
+  const renderTxPowerTab = () => {
+    const txPowerMode = (iface as any)['tx-power-mode'] || 'default';
+    const showTxPowerInput = txPowerMode !== 'default';
+    return (
     <div className={styles.tabContent}>
       <div className={styles.formSection}>
         <h3 className={styles.sectionTitle}>发射功率配置</h3>
@@ -1383,20 +1420,34 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
           <div className={styles.formGroup}>
             <label className={styles.formLabel}>发射功率模式</label>
             <Select
-              value={(iface as any)['tx-power-mode'] || 'default'}
+              value={txPowerMode}
               onChange={(value) => updateField('tx-power-mode', value)}
               style={{ width: '100%' }}
             >
               <Option value="default">默认</Option>
-              <Option value="all rates fixed">所有速率固定</Option>
-              <Option value="card rates">网卡速率</Option>
-              <Option value="manual">手动</Option>
+              <Option value="all-rates-fixed">手动配置</Option>
             </Select>
           </div>
         </div>
+
+        {showTxPowerInput && (
+          <div className={styles.formRow}>
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel}>发射功率</label>
+              <Input
+                value={(iface as any)['tx-power'] ?? ''}
+                onChange={(e) => updateField('tx-power', e.target.value)}
+                placeholder="-30 ~ 30"
+                addonAfter="dBm"
+                type="number"
+              />
+            </div>
+          </div>
+        )}
       </div>
     </div>
-  );
+    );
+  };
 
   const renderPlaceholderTab = (tabName: string) => (
     <div className={styles.tabContent}>

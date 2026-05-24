@@ -2107,7 +2107,8 @@ async def handle_start_interference_scan(websocket: WebSocketConn, device_ip: st
                         'channel': item.get('channel', '--'),
                         'signal_strength': item.get('sig', '--'),
                         'noise': item.get('nf', '--'),
-                        'snr': item.get('snr', '--')
+                        'snr': item.get('snr', '--'),
+                        'radio_name': item.get('radio-name', '--')
                     }
                     
                     try:

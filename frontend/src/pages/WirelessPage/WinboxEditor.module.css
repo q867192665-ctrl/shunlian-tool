@@ -67,6 +67,11 @@
   color: var(--color-text-primary);
   border-bottom: 1px solid var(--color-border-primary);
   padding-bottom: 8px;
+  user-select: none;
+}
+
+.sectionTitle:hover {
+  color: var(--color-accent-primary);
 }
 
 .formRow {

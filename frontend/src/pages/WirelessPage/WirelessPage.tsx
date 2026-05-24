@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Input, Select, Modal, message as antMessage, Tabs } from 'antd';
 import {
-  ReloadOutlined,
   WifiOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -10,6 +9,9 @@ import {
   EditOutlined,
   WarningOutlined,
   SafetyOutlined,
+  SearchOutlined,
+  StopOutlined,
+  PlusOutlined,
 } from '@ant-design/icons';
 import { useAppState } from '../../contexts/AppContext';
 import { useWebSocket } from '../../contexts/WebSocketContext';
@@ -41,6 +43,7 @@ interface WirelessClient {
   interface: string;
   'mac-address': string;
   signal?: string;
+  'rx-signal'?: string;
   'tx-rate'?: string;
   'rx-rate'?: string;
   uptime?: string;
@@ -53,6 +56,24 @@ interface SecurityProfile {
   'authentication-types'?: string;
   'unicast-ciphers'?: string;
   'group-ciphers'?: string;
+}
+
+interface ScanResult {
+  address: string;
+  ssid: string;
+  channel: string;
+  signal_strength: string;
+  noise: string;
+  snr: string;
+  radio_name: string;
+}
+
+interface ScanInterface {
+  name: string;
+  frequency: string;
+  band: string;
+  running: boolean;
+  disabled: boolean;
 }
 
 export const WirelessPage: React.FC = () => {
@@ -72,7 +93,40 @@ export const WirelessPage: React.FC = () => {
   const [toggleLoading, setToggleLoading] = useState<string | null>(null);
   const [editLoading, setEditLoading] = useState(false);
 
+  // 干扰扫描相关状态
+  const [scanModalVisible, setScanModalVisible] = useState(false);
+  const [scanInterfaces, setScanInterfaces] = useState<ScanInterface[]>([]);
+  const [selectedScanInterface, setSelectedScanInterface] = useState<string>('');
+  const [scanBackground, setScanBackground] = useState(false);
+  const [scanScanning, setScanScanning] = useState(false);
+  const [scanResults, setScanResults] = useState<Record<string, ScanResult>>({});
+  const [scanSortField, setScanSortField] = useState<keyof ScanResult>('signal_strength');
+  const [scanSortDirection, setScanSortDirection] = useState<'asc' | 'desc'>('desc');
+  const scanWsRef = useRef<WebSocket | null>(null);
+  const scanResultTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // 加密配置相关状态
+  const [securityAddModalVisible, setSecurityAddModalVisible] = useState(false);
+  const [securityEditModalVisible, setSecurityEditModalVisible] = useState(false);
+  const [editingProfile, setEditingProfile] = useState<SecurityProfile | null>(null);
+  const [securityForm, setSecurityForm] = useState({ name: '', auth: 'wpa2', cipher: 'aes', password: '' });
+  const [securityEditForm, setSecurityEditForm] = useState({ name: '', auth: 'wpa2', cipher: 'aes', password: '' });
+  const [securityLoading, setSecurityLoading] = useState(false);
+
   const wsDataAppliedRef = useRef(false);
+
+  // 组件卸载时清理扫描WebSocket连接
+  useEffect(() => {
+    return () => {
+      if (scanWsRef.current) {
+        if (scanWsRef.current.readyState === WebSocket.OPEN) {
+          try { scanWsRef.current.send(JSON.stringify({ action: 'stop_scan' })); } catch {}
+          scanWsRef.current.close();
+        }
+        scanWsRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!routerIp) return;
@@ -135,6 +189,7 @@ export const WirelessPage: React.FC = () => {
         interface: c.interface,
         'mac-address': c.mac,
         signal: c.tx_signal,
+        'rx-signal': c.rx_signal,
         'tx-rate': c.tx_rate,
         'rx-rate': c.rx_rate,
         uptime: c.uptime,
@@ -447,6 +502,417 @@ export const WirelessPage: React.FC = () => {
     return changed;
   };
 
+  // ==================== 干扰扫描功能 ====================
+
+  const getScanWsUrl = useCallback(() => {
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const isDev = window.location.port === '5173';
+    return isDev ? `${wsProtocol}//${window.location.host}/ws` : `${wsProtocol}//${window.location.hostname}:32996`;
+  }, []);
+
+  const loadScanInterfaces = useCallback(() => {
+    if (!router) return;
+    const wsUrl = getScanWsUrl();
+    const ws = new WebSocket(wsUrl);
+    let closed = false;
+    ws.onopen = () => {
+      ws.send(JSON.stringify({
+        action: 'get_wireless_interfaces_list',
+        ip: router.ipAddress,
+        username: router.username || '',
+        password: router.password || '',
+      }));
+    };
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'wireless_interfaces_list') {
+          const ifaces: ScanInterface[] = data.interfaces || [];
+          setScanInterfaces(ifaces);
+          const firstRunning = ifaces.find((i: ScanInterface) => i.running);
+          setSelectedScanInterface(firstRunning?.name || ifaces[0]?.name || '');
+          if (!closed) { ws.close(); closed = true; }
+        } else if (data.type === 'error') {
+          antMessage.error(data.message || '获取无线接口列表失败');
+          if (!closed) { ws.close(); closed = true; }
+        }
+      } catch (e) {
+        console.error('解析接口列表失败:', e);
+      }
+    };
+    ws.onerror = () => { if (!closed) { ws.close(); closed = true; } };
+    ws.onclose = () => { closed = true; };
+    // 超时保护：10秒未返回则关闭
+    setTimeout(() => { if (!closed && ws.readyState !== WebSocket.CLOSED) { ws.close(); closed = true; } }, 10000);
+  }, [router, getScanWsUrl]);
+
+  const startScan = useCallback(() => {
+    if (!router || !selectedScanInterface) {
+      antMessage.warning('请选择扫描接口');
+      return;
+    }
+
+    // 如果已有扫描连接，先关闭
+    if (scanWsRef.current) {
+      if (scanWsRef.current.readyState === WebSocket.OPEN) {
+        scanWsRef.current.send(JSON.stringify({ action: 'stop_scan' }));
+        scanWsRef.current.close();
+      }
+      scanWsRef.current = null;
+    }
+
+    setScanResults({});
+    setScanScanning(true);
+
+    const wsUrl = getScanWsUrl();
+    const ws = new WebSocket(wsUrl);
+    scanWsRef.current = ws;
+
+    ws.onopen = () => {
+      // 连接建立后再次确认引用未被替换
+      if (scanWsRef.current !== ws) {
+        ws.close();
+        return;
+      }
+      ws.send(JSON.stringify({
+        action: 'start_interference_scan',
+        ip: router.ipAddress,
+        username: router.username || '',
+        password: router.password || '',
+        interface_name: selectedScanInterface,
+        background: scanBackground,
+      }));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'scan_result' && data.result) {
+          const address = data.result.address || '--';
+          setScanResults(prev => ({
+            ...prev,
+            [address]: {
+              address,
+              ssid: data.result.ssid || '--',
+              channel: data.result.channel || '--',
+              signal_strength: data.result.signal_strength || '--',
+              noise: data.result.noise || '--',
+              snr: data.result.snr || '--',
+              radio_name: data.result.radio_name || '--',
+            },
+          }));
+        } else if (data.type === 'error') {
+          antMessage.error(data.message || '扫描失败');
+          // 后端返回错误，扫描已终止，关闭连接
+          ws.close();
+        }
+      } catch (e) {
+        console.error('解析扫描结果失败:', e);
+      }
+    };
+
+    ws.onerror = () => {
+      antMessage.error('扫描连接失败');
+      setScanScanning(false);
+      if (scanWsRef.current === ws) {
+        scanWsRef.current = null;
+      }
+    };
+
+    ws.onclose = () => {
+      // 后端主动关闭（扫描完成/异常/stop_scan），前端同步状态
+      setScanScanning(false);
+      if (scanWsRef.current === ws) {
+        scanWsRef.current = null;
+      }
+    };
+  }, [router, selectedScanInterface, scanBackground, getScanWsUrl]);
+
+  const stopScan = useCallback(() => {
+    const ws = scanWsRef.current;
+    if (ws) {
+      scanWsRef.current = null; // 先置空，防止 onclose 回调中重复处理
+      if (ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ action: 'stop_scan' }));
+        } catch { /* 忽略发送失败 */ }
+        ws.close();
+      }
+    }
+    setScanScanning(false);
+  }, []);
+
+  const closeScanModal = useCallback(() => {
+    stopScan();
+    setScanModalVisible(false);
+    setScanResults({});
+    setScanInterfaces([]);
+    setSelectedScanInterface('');
+  }, [stopScan]);
+
+  const sortScanResults = useCallback((field: keyof ScanResult) => {
+    if (scanSortField === field) {
+      setScanSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setScanSortField(field);
+      setScanSortDirection('desc');
+    }
+  }, [scanSortField]);
+
+  // 频率到信道号映射
+  const freqToChannel = (freq: string): string => {
+    if (!freq || freq === '--') return freq;
+    const f = parseInt(freq);
+    if (isNaN(f)) return freq;
+    // 2.4GHz 信道映射
+    const ghz2: Record<number, number> = { 2412:1,2417:2,2422:3,2427:4,2432:5,2437:6,2442:7,2447:8,2452:9,2457:10,2462:11,2467:12,2472:13,2484:14 };
+    if (ghz2[f]) return `${f}（${ghz2[f]}）`;
+    // 5GHz 信道映射
+    const ghz5: Record<number, number> = { 5180:36,5200:40,5220:44,5240:48,5260:52,5280:56,5300:60,5320:64,5500:100,5520:104,5540:108,5560:112,5580:116,5600:120,5620:124,5640:128,5660:132,5680:136,5700:140,5720:144,5745:149,5765:153,5785:157,5805:161,5825:165 };
+    if (ghz5[f]) return `${f}（${ghz5[f]}）`;
+    return freq;
+  };
+
+  const getSortedScanResults = useCallback((): ScanResult[] => {
+    const results = Object.values(scanResults);
+    const numericFields: (keyof ScanResult)[] = ['signal_strength', 'noise', 'snr'];
+    results.sort((a, b) => {
+      let aVal: string | number = a[scanSortField] || '';
+      let bVal: string | number = b[scanSortField] || '';
+      if (numericFields.includes(scanSortField)) {
+        aVal = parseInt(aVal as string) || -999;
+        bVal = parseInt(bVal as string) || -999;
+      }
+      if (aVal < bVal) return scanSortDirection === 'asc' ? -1 : 1;
+      if (aVal > bVal) return scanSortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return results;
+  }, [scanResults, scanSortField, scanSortDirection]);
+
+  const renderSortIcon = (field: keyof ScanResult) => {
+    if (scanSortField !== field) return null;
+    return scanSortDirection === 'asc' ? ' ↑' : ' ↓';
+  };
+
+  // ==================== 结束干扰扫描功能 ====================
+
+  // ==================== 加密配置功能 ====================
+
+  const authToTypes = (auth: string): string => {
+    switch (auth) {
+      case 'wpa': return 'wpa-psk';
+      case 'wpa2': return 'wpa2-psk';
+      case 'wpa/wpa2': return 'wpa-psk,wpa2-psk';
+      default: return 'wpa2-psk';
+    }
+  };
+
+  const typesToAuth = (types: string): string => {
+    if (types.includes('wpa2') && types.includes('wpa')) return 'wpa/wpa2';
+    if (types.includes('wpa2')) return 'wpa2';
+    if (types.includes('wpa')) return 'wpa';
+    return 'wpa2';
+  };
+
+  const cipherToValue = (cipher: string): string => {
+    if (!cipher) return 'aes';
+    const lower = cipher.toLowerCase();
+    if (lower.includes('aes') && lower.includes('tkip')) return 'aes/tkip';
+    if (lower.includes('tkip')) return 'tkip';
+    return 'aes';
+  };
+
+  const cipherToApi = (cipher: string): { unicast: string; group: string } => {
+    switch (cipher) {
+      case 'aes': return { unicast: 'aes-ccm', group: 'aes-ccm' };
+      case 'tkip': return { unicast: 'tkip', group: 'tkip' };
+      case 'aes/tkip': return { unicast: 'aes-ccm,tkip', group: 'aes-ccm,tkip' };
+      default: return { unicast: 'aes-ccm', group: 'aes-ccm' };
+    }
+  };
+
+  const translateMikrotikError = (msg: string): string => {
+    if (!msg) return '操作失败';
+    if (msg.includes('already exists')) return '同名配置已存在';
+    if (msg.includes('not found')) return '未找到该配置';
+    if (msg.includes('in use') || msg.includes('referenced')) return '该配置正在使用中，无法删除';
+    if (msg.includes('invalid')) return '参数无效';
+    return msg;
+  };
+
+  const handleAddSecurityProfile = async () => {
+    if (!routerIp) { antMessage.error('设备 IP 不可用'); return; }
+    if (!securityForm.name.trim()) { antMessage.warning('请输入配置名称'); return; }
+    if (!securityForm.password || securityForm.password.length < 8) { antMessage.warning('密码至少需要8位'); return; }
+
+    setSecurityLoading(true);
+    try {
+      const { unicast, group } = cipherToApi(securityForm.cipher);
+      const resp = await fetch('/api/security-profile/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ip: routerIp,
+          username: router?.username || 'admin',
+          password: router?.password || '',
+          name: securityForm.name.trim(),
+          authTypes: authToTypes(securityForm.auth),
+          unicastCiphers: unicast,
+          groupCiphers: group,
+          wpaKey: securityForm.password,
+          wpa2Key: securityForm.password,
+        }),
+      });
+      const result = await resp.json();
+      if (result.success) {
+        antMessage.success('添加成功');
+        setSecurityAddModalVisible(false);
+        setSecurityForm({ name: '', auth: 'wpa2', cipher: 'aes', password: '' });
+        fetchAllData();
+      } else {
+        antMessage.error(translateMikrotikError(result.message));
+      }
+    } catch (err) {
+      antMessage.error('添加失败');
+    } finally {
+      setSecurityLoading(false);
+    }
+  };
+
+  const handleEditSecurityProfile = async () => {
+    if (!routerIp || !editingProfile) { antMessage.error('参数不足'); return; }
+    if (!securityEditForm.name.trim()) { antMessage.warning('请输入配置名称'); return; }
+    if (securityEditForm.password && securityEditForm.password.length < 8) { antMessage.warning('密码至少需要8位'); return; }
+
+    setSecurityLoading(true);
+    try {
+      const { unicast, group } = cipherToApi(securityEditForm.cipher);
+      const body: Record<string, string> = {
+        ip: routerIp,
+        username: router?.username || 'admin',
+        password: router?.password || '',
+        originalName: editingProfile.name,
+        name: securityEditForm.name.trim(),
+        authTypes: authToTypes(securityEditForm.auth),
+        unicastCiphers: unicast,
+        groupCiphers: group,
+      };
+      if (securityEditForm.password) {
+        body.wpaKey = securityEditForm.password;
+        body.wpa2Key = securityEditForm.password;
+      }
+      const resp = await fetch('/api/security-profile/edit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const result = await resp.json();
+      if (result.success) {
+        antMessage.success('修改成功');
+        setSecurityEditModalVisible(false);
+        setEditingProfile(null);
+        fetchAllData();
+      } else {
+        antMessage.error(translateMikrotikError(result.message));
+      }
+    } catch (err) {
+      antMessage.error('修改失败');
+    } finally {
+      setSecurityLoading(false);
+    }
+  };
+
+  const handleDeleteSecurityProfile = (profile: SecurityProfile) => {
+    if (profile.name === 'default') {
+      antMessage.warning('默认配置不可删除');
+      return;
+    }
+    Modal.confirm({
+      title: '确认删除',
+      content: `确定要删除加密配置 "${profile.name}" 吗？`,
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const resp = await fetch('/api/security-profile/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ip: routerIp,
+              username: router?.username || 'admin',
+              password: router?.password || '',
+              name: profile.name,
+            }),
+          });
+          const result = await resp.json();
+          if (result.success) {
+            antMessage.success('删除成功');
+            fetchAllData();
+          } else {
+            antMessage.error(translateMikrotikError(result.message));
+          }
+        } catch (err) {
+          antMessage.error('删除失败');
+        }
+      },
+    });
+  };
+
+  const handleToggleSecurityProfile = (profile: SecurityProfile, enable: boolean) => {
+    const mode = enable ? 'dynamic-keys' : 'none';
+    const action = enable ? '启用' : '禁用';
+    Modal.confirm({
+      title: `确认${action}`,
+      content: enable
+        ? `确定要启用加密配置 "${profile.name}" 吗？`
+        : `确定要禁用加密配置 "${profile.name}" 吗？禁用后无线网络将不加密。`,
+      okText: action,
+      okType: enable ? 'primary' : 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const resp = await fetch('/api/security-profile/set-mode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ip: routerIp,
+              username: router?.username || 'admin',
+              password: router?.password || '',
+              name: profile.name,
+              mode,
+            }),
+          });
+          const result = await resp.json();
+          if (result.success) {
+            antMessage.success(`${action}成功`);
+            fetchAllData();
+          } else {
+            antMessage.error(translateMikrotikError(result.message));
+          }
+        } catch (err) {
+          antMessage.error(`${action}失败`);
+        }
+      },
+    });
+  };
+
+  const openEditSecurityModal = (profile: SecurityProfile) => {
+    setEditingProfile(profile);
+    const authTypes = profile['authentication-types'] || '';
+    const unicastCiphers = profile['unicast-ciphers'] || '';
+    setSecurityEditForm({
+      name: profile.name,
+      auth: typesToAuth(authTypes),
+      cipher: cipherToValue(unicastCiphers),
+      password: '',
+    });
+    setSecurityEditModalVisible(true);
+  };
+
+  // ==================== 结束加密配置功能 ====================
+
   const handleSaveEdit = async () => {
     if (!routerIp) {
       antMessage.error('设备 IP 不可用');
@@ -525,7 +991,7 @@ export const WirelessPage: React.FC = () => {
         <div className={styles.emptyState}>
           <WarningOutlined className={styles.errorIcon} />
           <p className={styles.errorText}>{error}</p>
-          <button className={styles.retryButton} onClick={() => fetchData(true)}>
+          <button className={styles.retryButton} onClick={() => fetchAllData()}>
             重试
           </button>
         </div>
@@ -561,7 +1027,19 @@ export const WirelessPage: React.FC = () => {
             </div>
 
             <div className={styles.section}>
-              <h2 className={styles.sectionTitle}>活跃接口</h2>
+              <div className={styles.sectionHeader}>
+                <h2 className={styles.sectionTitle}>活跃接口</h2>
+                <button
+                  className={styles.sectionButton}
+                  onClick={() => {
+                    setScanModalVisible(true);
+                    loadScanInterfaces();
+                  }}
+                >
+                  <SearchOutlined className={styles.refreshIcon} />
+                  干扰扫描
+                </button>
+              </div>
               <div className={styles.table}>
                 <div className={styles.tableHeader}>
                   <div className={styles.tableCell}>名称</div>
@@ -810,18 +1288,20 @@ export const WirelessPage: React.FC = () => {
               okText="应用"
               cancelText="取消"
               width={850}
-              footer={[
-                <button key="cancel" className={styles.winboxCancelBtn} onClick={() => {
-                  setEditModalVisible(false);
-                  setEditingInterface(null);
-                  setOriginalInterface(null);
-                }}>
-                  取消
-                </button>,
-                <button key="ok" className={styles.winboxOkBtn} onClick={handleSaveEdit}>
-                  应用
-                </button>,
-              ]}
+              footer={
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+                  <button className={styles.modalCancelBtn} onClick={() => {
+                    setEditModalVisible(false);
+                    setEditingInterface(null);
+                    setOriginalInterface(null);
+                  }}>
+                    取消
+                  </button>
+                  <button className={styles.modalConfirmBtn} onClick={handleSaveEdit}>
+                    应用
+                  </button>
+                </div>
+              }
             >
               {editLoading ? (
                 <div className={styles.loadingContainer}>
@@ -881,14 +1361,14 @@ export const WirelessPage: React.FC = () => {
                 <div className={styles.tableHeader}>
                   <div className={styles.tableCell}>接口</div>
                   <div className={styles.tableCell}>MAC 地址</div>
-                  <div className={styles.tableCell}>信号强度</div>
+                  <div className={styles.tableCell}>信号强度（发送\接收）</div>
                   <div className={styles.tableCell}>发送速率</div>
                   <div className={styles.tableCell}>接收速率</div>
                   <div className={styles.tableCell}>在线时长</div>
                   <div className={styles.tableCell}>操作</div>
                 </div>
                 {clients.map((client, index) => (
-                  <div key={`${client['mac-address']}-${index}`} className={styles.tableRow}>
+                  <div key={`${client['mac-address']}-${index}`} className={`${styles.tableRow} ${!isStrongSignal(client.signal || client['signal-strength']) ? styles.weakSignalRow : ''}`}>
                     <div
                       className={`${styles.tableCell} ${styles.copyable}`}
                       onClick={() => handleCopyToClipboard(client.interface, '接口')}
@@ -908,7 +1388,12 @@ export const WirelessPage: React.FC = () => {
                     <div className={styles.tableCell}>
                       <span className={`${styles.signalBadge} ${isStrongSignal(client.signal || client['signal-strength']) ? styles.strongSignal : styles.weakSignal}`}>
                         <SignalFilled className={styles.signalIcon} />
-                        {client.signal || client['signal-strength'] || '—'}
+                        {parseSignalStrength(client.signal || client['signal-strength']) ?? '—'}
+                        {client['rx-signal'] && client['rx-signal'] !== '--' && (
+                          <span style={{ opacity: 0.7, marginLeft: 4 }}>
+                            \{parseSignalStrength(client['rx-signal']) ?? '—'}
+                          </span>
+                        )}
                       </span>
                     </div>
                     <div className={styles.tableCell}>
@@ -965,7 +1450,7 @@ export const WirelessPage: React.FC = () => {
                 <CheckCircleOutlined className={styles.summaryIcon} />
                 <div className={styles.summaryContent}>
                   <div className={styles.summaryValue}>
-                    {profiles.filter(p => p['authentication-types'] && p['authentication-types'] !== '--').length}
+                    {profiles.filter(p => p.mode && p.mode !== 'none' && p.mode !== '--').length}
                   </div>
                   <div className={styles.summaryLabel}>已启用认证</div>
                 </div>
@@ -974,15 +1459,26 @@ export const WirelessPage: React.FC = () => {
                 <WarningOutlined className={styles.summaryIcon} />
                 <div className={styles.summaryContent}>
                   <div className={styles.summaryValue}>
-                    {profiles.filter(p => !p['authentication-types'] || p['authentication-types'] === '--').length}
+                    {profiles.filter(p => !p.mode || p.mode === 'none' || p.mode === '--').length}
                   </div>
-                  <div className={styles.summaryLabel}>开放认证</div>
+                  <div className={styles.summaryLabel}>未启用认证</div>
                 </div>
               </div>
             </div>
 
             <div className={styles.section}>
-              <h2 className={styles.sectionTitle}>加密配置</h2>
+              <div className={styles.sectionHeader}>
+                <h2 className={styles.sectionTitle}>加密配置</h2>
+                <button
+                  className={styles.sectionButton}
+                  onClick={() => {
+                    setSecurityForm({ name: '', auth: 'wpa2', cipher: 'aes', password: '' });
+                    setSecurityAddModalVisible(true);
+                  }}
+                >
+                  <PlusOutlined /> 添加
+                </button>
+              </div>
               <div className={styles.table}>
                 <div className={styles.tableHeader}>
                   <div className={styles.tableCell}>名称</div>
@@ -990,53 +1486,87 @@ export const WirelessPage: React.FC = () => {
                   <div className={styles.tableCell}>认证类型</div>
                   <div className={styles.tableCell}>单播加密</div>
                   <div className={styles.tableCell}>组播加密</div>
+                  <div className={styles.tableCell}>操作</div>
                 </div>
-                {profiles.map((profile, index) => (
-                  <div key={profile.name || index} className={styles.tableRow}>
-                    <div className={styles.tableCell}>
-                      <span
-                        className={`${styles.monospace} ${styles.copyable}`}
-                        onClick={() => handleCopyToClipboard(profile.name, '配置名')}
-                        title="点击复制"
-                      >
-                        {profile.name}
-                      </span>
-                    </div>
-                    <div className={styles.tableCell}>
-                      {profile.mode && profile.mode !== '--' ? (
-                        <span className={`${styles.badge} ${styles.badgeInfo}`}>
-                          {profile.mode}
+                {profiles.map((profile, index) => {
+                  const isEnabled = profile.mode === 'dynamic-keys';
+                  return (
+                    <div key={profile.name || index} className={styles.tableRow}>
+                      <div className={styles.tableCell}>
+                        <span
+                          className={`${styles.monospace} ${styles.copyable}`}
+                          onClick={() => handleCopyToClipboard(profile.name, '配置名')}
+                          title="点击复制"
+                        >
+                          {profile.name}
                         </span>
-                      ) : '—'}
-                    </div>
-                    <div className={styles.tableCell}>
-                      {profile['authentication-types'] && profile['authentication-types'] !== '--' ? (
-                        <span className={`${styles.badge} ${styles.badgeSuccess}`}>
-                          <SafetyOutlined className={styles.badgeIcon} />
-                          {profile['authentication-types']}
+                      </div>
+                      <div className={styles.tableCell}>
+                        {profile.mode && profile.mode !== '--' ? (
+                          <span className={`${styles.badge} ${styles.badgeInfo}`}>
+                            {profile.mode}
+                          </span>
+                        ) : '—'}
+                      </div>
+                      <div className={styles.tableCell}>
+                        {profile.mode && profile.mode !== 'none' && profile.mode !== '--' ? (
+                          <span className={`${styles.badge} ${styles.badgeSuccess}`}>
+                            <SafetyOutlined className={styles.badgeIcon} />
+                            {profile['authentication-types'] && profile['authentication-types'] !== '--'
+                              ? profile['authentication-types']
+                              : profile.mode}
+                          </span>
+                        ) : (
+                          <span className={`${styles.badge} ${styles.badgeWarning}`}>
+                            未启用
+                          </span>
+                        )}
+                      </div>
+                      <div className={styles.tableCell}>
+                        <span className={styles.monospace}>
+                          {profile['unicast-ciphers'] && profile['unicast-ciphers'] !== '--'
+                            ? profile['unicast-ciphers']
+                            : '—'}
                         </span>
-                      ) : (
-                        <span className={`${styles.badge} ${styles.badgeWarning}`}>
-                          开放
+                      </div>
+                      <div className={styles.tableCell}>
+                        <span className={styles.monospace}>
+                          {profile['group-ciphers'] && profile['group-ciphers'] !== '--'
+                            ? profile['group-ciphers']
+                            : '—'}
                         </span>
-                      )}
+                      </div>
+                      <div className={styles.tableCell}>
+                        <div className={styles.actionButtons}>
+                          <Toggle
+                            checked={isEnabled}
+                            onChange={(checked) => handleToggleSecurityProfile(profile, checked)}
+                            aria-label={`切换加密配置 ${profile.name}`}
+                          />
+                          <button
+                            className={styles.actionButton}
+                            onClick={() => openEditSecurityModal(profile)}
+                            title="编辑"
+                          >
+                            <EditOutlined />
+                          </button>
+                          <button
+                            className={`${styles.actionButton} ${styles.deleteButton}`}
+                            onClick={() => handleDeleteSecurityProfile(profile)}
+                            title="删除"
+                          >
+                            <DeleteOutlined />
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    <div className={styles.tableCell}>
-                      <span className={styles.monospace}>
-                        {profile['unicast-ciphers'] && profile['unicast-ciphers'] !== '--'
-                          ? profile['unicast-ciphers']
-                          : '—'}
-                      </span>
-                    </div>
-                    <div className={styles.tableCell}>
-                      <span className={styles.monospace}>
-                        {profile['group-ciphers'] && profile['group-ciphers'] !== '--'
-                          ? profile['group-ciphers']
-                          : '—'}
-                      </span>
-                    </div>
+                  );
+                })}
+                {profiles.length === 0 && (
+                  <div className={styles.emptyRow}>
+                    <span>暂无加密配置</span>
                   </div>
-                ))}
+                )}
               </div>
             </div>
           </div>
@@ -1055,10 +1585,6 @@ export const WirelessPage: React.FC = () => {
           <p className={styles.subtitle}>管理无线接口、终端连接和安全配置</p>
         </div>
         <div className={styles.headerActions}>
-          <button className={styles.refreshButton} onClick={() => fetchData(false)}>
-            <ReloadOutlined className={styles.refreshIcon} />
-            刷新
-          </button>
         </div>
       </div>
 
@@ -1072,6 +1598,246 @@ export const WirelessPage: React.FC = () => {
         ]}
         className={styles.tabs}
       />
+
+      {/* 添加加密配置 Modal */}
+      <Modal
+        title="添加加密配置"
+        open={securityAddModalVisible}
+        onCancel={() => setSecurityAddModalVisible(false)}
+        onOk={handleAddSecurityProfile}
+        okText="添加"
+        cancelText="取消"
+        confirmLoading={securityLoading}
+        width={460}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <label style={{ display: 'block', marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>配置名称</label>
+            <Input
+              value={securityForm.name}
+              onChange={e => setSecurityForm(f => ({ ...f, name: e.target.value }))}
+              placeholder="输入配置名称"
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>认证类型</label>
+            <Select
+              value={securityForm.auth}
+              onChange={v => setSecurityForm(f => ({ ...f, auth: v }))}
+              style={{ width: '100%' }}
+            >
+              <Select.Option value="wpa2">WPA2-PSK</Select.Option>
+              <Select.Option value="wpa">WPA-PSK</Select.Option>
+              <Select.Option value="wpa/wpa2">WPA/WPA2-PSK</Select.Option>
+            </Select>
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>加密算法</label>
+            <Select
+              value={securityForm.cipher}
+              onChange={v => setSecurityForm(f => ({ ...f, cipher: v }))}
+              style={{ width: '100%' }}
+            >
+              <Select.Option value="aes">AES-CCM</Select.Option>
+              <Select.Option value="tkip">TKIP</Select.Option>
+              <Select.Option value="aes/tkip">AES-CCM/TKIP</Select.Option>
+            </Select>
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>密码</label>
+            <Input.Password
+              value={securityForm.password}
+              onChange={e => setSecurityForm(f => ({ ...f, password: e.target.value }))}
+              placeholder="至少8位密码"
+            />
+          </div>
+        </div>
+      </Modal>
+
+      {/* 编辑加密配置 Modal */}
+      <Modal
+        title="编辑加密配置"
+        open={securityEditModalVisible}
+        onCancel={() => { setSecurityEditModalVisible(false); setEditingProfile(null); }}
+        onOk={handleEditSecurityProfile}
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={securityLoading}
+        width={460}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <label style={{ display: 'block', marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>配置名称</label>
+            <Input
+              value={securityEditForm.name}
+              onChange={e => setSecurityEditForm(f => ({ ...f, name: e.target.value }))}
+              placeholder="输入配置名称"
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>认证类型</label>
+            <Select
+              value={securityEditForm.auth}
+              onChange={v => setSecurityEditForm(f => ({ ...f, auth: v }))}
+              style={{ width: '100%' }}
+            >
+              <Select.Option value="wpa2">WPA2-PSK</Select.Option>
+              <Select.Option value="wpa">WPA-PSK</Select.Option>
+              <Select.Option value="wpa/wpa2">WPA/WPA2-PSK</Select.Option>
+            </Select>
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>加密算法</label>
+            <Select
+              value={securityEditForm.cipher}
+              onChange={v => setSecurityEditForm(f => ({ ...f, cipher: v }))}
+              style={{ width: '100%' }}
+            >
+              <Select.Option value="aes">AES-CCM</Select.Option>
+              <Select.Option value="tkip">TKIP</Select.Option>
+              <Select.Option value="aes/tkip">AES-CCM/TKIP</Select.Option>
+            </Select>
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: 4, fontSize: 13, color: 'var(--color-text-secondary)' }}>新密码（留空则不修改）</label>
+            <Input.Password
+              value={securityEditForm.password}
+              onChange={e => setSecurityEditForm(f => ({ ...f, password: e.target.value }))}
+              placeholder="至少8位密码"
+            />
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        title="干扰扫描"
+        open={scanModalVisible}
+        onCancel={closeScanModal}
+        footer={null}
+        width={900}
+        destroyOnClose
+      >
+        <div className={styles.scanControls}>
+          <div className={styles.scanControlRow}>
+            <label className={styles.scanLabel}>扫描接口</label>
+            <Select
+              value={selectedScanInterface || undefined}
+              onChange={setSelectedScanInterface}
+              style={{ width: 200 }}
+              placeholder="选择接口"
+              disabled={scanScanning}
+            >
+              {scanInterfaces.map(iface => (
+                <Select.Option key={iface.name} value={iface.name}>
+                  {iface.name} {iface.running ? '(运行中)' : iface.disabled ? '(已禁用)' : '(未运行)'}
+                </Select.Option>
+              ))}
+            </Select>
+            <label className={styles.scanCheckboxLabel}>
+              <input
+                type="checkbox"
+                checked={scanBackground}
+                onChange={e => setScanBackground(e.target.checked)}
+                disabled={scanScanning}
+              />
+              后台扫描
+            </label>
+          </div>
+          <div className={styles.scanControlRow}>
+            {!scanScanning ? (
+              <button
+                className={styles.scanStartBtn}
+                onClick={startScan}
+                disabled={!selectedScanInterface}
+              >
+                <SearchOutlined /> 开始扫描
+              </button>
+            ) : (
+              <button className={styles.scanStopBtn} onClick={stopScan}>
+                <StopOutlined /> 停止扫描
+              </button>
+            )}
+            {scanScanning && (
+              <span className={styles.scanStatus}>扫描中... 已发现 {Object.keys(scanResults).length} 个信号</span>
+            )}
+            {!scanScanning && Object.keys(scanResults).length > 0 && (
+              <span className={styles.scanStatus}>扫描完成，共发现 {Object.keys(scanResults).length} 个信号</span>
+            )}
+          </div>
+        </div>
+
+        {(scanScanning || Object.keys(scanResults).length > 0) && (
+          <div className={styles.scanResults}>
+            <div className={styles.scanTable}>
+              <div className={styles.scanTableHeader}>
+                <div className={styles.scanTableCell} onClick={() => sortScanResults('address')} style={{ cursor: 'pointer' }}>
+                  MAC地址{renderSortIcon('address')}
+                </div>
+                <div className={styles.scanTableCell} onClick={() => sortScanResults('ssid')} style={{ cursor: 'pointer' }}>
+                  SSID{renderSortIcon('ssid')}
+                </div>
+                <div className={styles.scanTableCell} onClick={() => sortScanResults('radio_name')} style={{ cursor: 'pointer' }}>
+                  Radio名称{renderSortIcon('radio_name')}
+                </div>
+                <div className={styles.scanTableCell} onClick={() => sortScanResults('channel')} style={{ cursor: 'pointer' }}>
+                  信道{renderSortIcon('channel')}
+                </div>
+                <div className={styles.scanTableCell} onClick={() => sortScanResults('signal_strength')} style={{ cursor: 'pointer' }}>
+                  信号强度{renderSortIcon('signal_strength')}
+                </div>
+                <div className={styles.scanTableCell} onClick={() => sortScanResults('noise')} style={{ cursor: 'pointer' }}>
+                  噪声{renderSortIcon('noise')}
+                </div>
+                <div className={styles.scanTableCell} onClick={() => sortScanResults('snr')} style={{ cursor: 'pointer' }}>
+                  信噪比{renderSortIcon('snr')}
+                </div>
+              </div>
+              {getSortedScanResults().map(item => (
+                <div key={item.address} className={styles.scanTableRow}>
+                  <div className={styles.scanTableCell}>
+                    <span
+                      className={`${styles.monospace} ${styles.copyable}`}
+                      onClick={() => handleCopyToClipboard(item.address, 'MAC地址')}
+                      title="点击复制"
+                    >
+                      {item.address}
+                    </span>
+                  </div>
+                  <div className={styles.scanTableCell}>
+                    <span
+                      className={`${styles.ssidText} ${styles.copyable}`}
+                      onClick={() => handleCopyToClipboard(item.ssid, 'SSID')}
+                      title="点击复制"
+                    >
+                      {item.ssid}
+                    </span>
+                  </div>
+                  <div className={styles.scanTableCell}>
+                    <span className={styles.monospace}>{item.radio_name}</span>
+                  </div>
+                  <div className={styles.scanTableCell}>
+                    <span className={styles.monospace}>{freqToChannel(item.channel)}</span>
+                  </div>
+                  <div className={styles.scanTableCell}>
+                    <span className={styles.monospace}>{item.signal_strength}</span>
+                  </div>
+                  <div className={styles.scanTableCell}>
+                    <span className={styles.monospace}>{item.noise}</span>
+                  </div>
+                  <div className={styles.scanTableCell}>
+                    <span className={styles.monospace}>{item.snr}</span>
+                  </div>
+                </div>
+              ))}
+              {Object.keys(scanResults).length === 0 && scanScanning && (
+                <div className={styles.emptyRow}>
+                  <span>正在扫描，请等待...</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };
