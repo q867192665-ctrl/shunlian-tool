@@ -1,7 +1,0 @@
-__pycache__
-*.pyc
-*.pyo
-venv/
-data/releases/
-data/backup/
-data/stats.json

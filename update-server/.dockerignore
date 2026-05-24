@@ -1,9 +1,0 @@
-__pycache__
-*.pyc
-*.pyo
-venv
-.git
-.gitignore
-start.bat
-data/releases
-data/backup

@@ -1,0 +1,3 @@
+[submodule "update-server"]
+	path = update-server
+	url = https://github.com/q867192665-ctrl/slscserver
