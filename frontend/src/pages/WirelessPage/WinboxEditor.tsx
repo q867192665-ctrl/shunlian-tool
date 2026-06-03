@@ -23,10 +23,22 @@ interface WirelessInterface {
   [key: string]: any;
 }
 
+interface SecurityProfileData {
+  name: string;
+  mode?: string;
+  authentication_types?: string;
+  unicast_ciphers?: string;
+  group_ciphers?: string;
+  authentication?: string;
+  cipher?: string;
+  password?: string;
+}
+
 interface WinboxEditorProps {
   interface: WirelessInterface;
   onChange: (iface: WirelessInterface) => void;
   routerIp?: string;
+  securityProfiles?: SecurityProfileData[];
 }
 
 const tabs = [
@@ -86,7 +98,7 @@ const frequencyOptions5G = [
 ];
 
 const countryList = [
-  { value: 'no country set', label: '未设置国家' },
+  { value: 'no_country_set', label: '默认' },
   { value: 'albania', label: '阿尔巴尼亚 (AL)' },
   { value: 'algeria', label: '阿尔及利亚 (DZ)' },
   { value: 'andorra', label: '安道尔 (AD)' },
@@ -477,7 +489,7 @@ const countryFrequencyRules: { [key: string]: { channels24G: number[], channels5
   },
 };
 
-export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, onChange, routerIp }) => {
+export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, onChange, routerIp, securityProfiles }) => {
   const [activeTab, setActiveTab] = useState('general');
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
     'advanced': true,
@@ -608,7 +620,7 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
 
   const getBandOptions = () => {
     if (!supportedBands) {
-      return { is24G: true, is5G: true, maxWidth: 160, options24G: [], options5G: [] };
+      return { is24G: true, is5G: true, maxWidth: 40, options24G: [], options5G: [] };
     }
     
     const { is24G: hw24G, is5G: hw5G, protocols, maxWidth } = supportedBands;
@@ -684,7 +696,7 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
 
   const getChannelWidthOptions = (band: string): { value: string; label: string }[] => {
     const bandType = getBandType(band);
-    const maxW = supportedBands?.maxWidth || 160;
+    const maxW = supportedBands?.maxWidth ?? 40;
     
     const allOptions: { value: string; label: string }[] = [
       { value: '20mhz', label: '20MHz' },
@@ -694,10 +706,24 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
     
     if (bandType === '5ghz' || bandType === 'both') {
       if (maxW >= 80) {
-        allOptions.push({ value: '20/40/80mhz', label: '20/40/80MHz' });
+        allOptions.push(
+          { value: '20/40/80mhz-Ceee', label: '20/40/80MHz (Ceee)' },
+          { value: '20/40/80mhz-eCee', label: '20/40/80MHz (eCee)' },
+          { value: '20/40/80mhz-eeCe', label: '20/40/80MHz (eeCe)' },
+          { value: '20/40/80mhz-eeeC', label: '20/40/80MHz (eeeC)' },
+        );
       }
       if (maxW >= 160) {
-        allOptions.push({ value: '20/40/80/160mhz', label: '20/40/80/160MHz' });
+        allOptions.push(
+          { value: '20/40/80/160mhz-Ceeeeeee', label: '20/40/80/160MHz (Ceeeeeee)' },
+          { value: '20/40/80/160mhz-eCeeeeee', label: '20/40/80/160MHz (eCeeeeee)' },
+          { value: '20/40/80/160mhz-eeCeeeee', label: '20/40/80/160MHz (eeCeeeee)' },
+          { value: '20/40/80/160mhz-eeeCeeee', label: '20/40/80/160MHz (eeeCeeee)' },
+          { value: '20/40/80/160mhz-eeeeCeee', label: '20/40/80/160MHz (eeeeCeee)' },
+          { value: '20/40/80/160mhz-eeeeeCee', label: '20/40/80/160MHz (eeeeeCee)' },
+          { value: '20/40/80/160mhz-eeeeeeCe', label: '20/40/80/160MHz (eeeeeeCe)' },
+          { value: '20/40/80/160mhz-eeeeeeeC', label: '20/40/80/160MHz (eeeeeeeC)' },
+        );
       }
     }
     
@@ -734,8 +760,30 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
         return [40, 48, 56, 64, 104, 112, 120, 128, 136, 144, 153, 161];
       } else if (widthLower === '20/40mhz') {
         return [36, 44, 52, 60, 100, 108, 116, 124, 132, 140, 149, 157];
-      } else if (widthLower === '20/40/80mhz') {
+      } else if (widthLower === '20/40/80mhz' || widthLower === '20/40/80mhz-ceee') {
         return [36, 52, 100, 116, 132, 149];
+      } else if (widthLower === '20/40/80mhz-ecee') {
+        return [40, 56, 104, 120, 136, 153];
+      } else if (widthLower === '20/40/80mhz-eece') {
+        return [44, 60, 108, 124, 140, 157];
+      } else if (widthLower === '20/40/80mhz-eeec') {
+        return [48, 64, 112, 128, 144, 161];
+      } else if (widthLower === '20/40/80/160mhz' || widthLower === '20/40/80/160mhz-ceeeeeee') {
+        return [36, 100, 132];
+      } else if (widthLower === '20/40/80/160mhz-eceeeeee') {
+        return [40, 104, 136];
+      } else if (widthLower === '20/40/80/160mhz-eeceeeee') {
+        return [44, 108, 140];
+      } else if (widthLower === '20/40/80/160mhz-eeeceeee') {
+        return [48, 112, 144];
+      } else if (widthLower === '20/40/80/160mhz-eeeeceee') {
+        return [52, 116, 149];
+      } else if (widthLower === '20/40/80/160mhz-eeeeecee') {
+        return [56, 120, 153];
+      } else if (widthLower === '20/40/80/160mhz-eeeeeece') {
+        return [60, 124, 157];
+      } else if (widthLower === '20/40/80/160mhz-eeeeeeec') {
+        return [64, 128, 161];
       }
       return [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165];
     }
@@ -743,13 +791,29 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
 
   const getChannelWidthDisplayValue = (rawValue: string, band: string): string => {
     const options = getChannelWidthOptions(band);
-    const match = options.find(opt => opt.value.toLowerCase() === rawValue.toLowerCase());
+    const rawLower = rawValue.toLowerCase();
+
+    const match = options.find(opt => opt.value.toLowerCase() === rawLower);
     if (match) return match.value;
-    const ceMatch = options.find(opt => opt.value.toLowerCase() === '20/40mhz-ce');
-    if (rawValue.toLowerCase() === '20/40mhz' && ceMatch) return ceMatch.value;
-    const bareCe = options.find(opt => opt.value.toLowerCase() === `${rawValue.toLowerCase()}-ce`);
+
+    if (rawLower === '20/40mhz') {
+      const ceMatch = options.find(opt => opt.value.toLowerCase() === '20/40mhz-ce');
+      if (ceMatch) return ceMatch.value;
+    }
+
+    if (rawLower === '20/40/80mhz') {
+      const default80 = options.find(opt => opt.value.toLowerCase() === '20/40/80mhz-ceee');
+      if (default80) return default80.value;
+    }
+
+    if (rawLower === '20/40/80/160mhz') {
+      const default160 = options.find(opt => opt.value.toLowerCase() === '20/40/80/160mhz-ceeeeeee');
+      if (default160) return default160.value;
+    }
+
+    const bareCe = options.find(opt => opt.value.toLowerCase() === `${rawLower}-ce`);
     if (bareCe) return bareCe.value;
-    const bareEc = options.find(opt => opt.value.toLowerCase() === `${rawValue.toLowerCase()}-ec`);
+    const bareEc = options.find(opt => opt.value.toLowerCase() === `${rawLower}-ec`);
     if (bareEc) return bareEc.value;
     return options[0]?.value || '20mhz';
   };
@@ -757,14 +821,15 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
   const getFrequencyOptions = useMemo(() => {
     const bandVal = iface.band || '';
     const channelWidth = iface['channel-width'] || '20mhz';
-    const country = (iface as any)['country'] || 'no country set';
+    const country = (iface as any)['country'] || 'no_country_set';
+    const freqMode = (iface as any)['frequency-mode'] || 'regulatory-domain';
     
     const bandType = getBandType(bandVal);
     const validChannels = getValidChannelsForWidth(channelWidth, bandType);
     
     let filteredChannels = validChannels;
     
-    if (country !== 'no country set' && countryFrequencyRules[country]) {
+    if (freqMode !== 'superchannel' && country !== 'no_country_set' && countryFrequencyRules[country]) {
       const countryRule = countryFrequencyRules[country];
       const allowedChannels = bandType === '2ghz' ? countryRule.channels24G : countryRule.channels5G;
       filteredChannels = validChannels.filter(ch => allowedChannels.includes(ch));
@@ -775,7 +840,7 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
                           [...frequencyOptions24G, ...frequencyOptions5G];
     
     return allFrequencies.filter(freq => filteredChannels.includes(freq.channel));
-  }, [iface.band, iface['channel-width'], (iface as any)['country']]);
+  }, [iface.band, iface['channel-width'], (iface as any)['country'], (iface as any)['frequency-mode']]);
 
   const parseRates = (rateStr: string | undefined): string[] => {
     if (!rateStr) return [];
@@ -847,9 +912,38 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
       }
     }
     
+    if (field === 'frequency-mode') {
+      const currentFreq = iface.frequency;
+      if (currentFreq && value === 'regulatory-domain') {
+        const currentChannel = frequencyOptions24G.find(f => f.value === currentFreq)?.channel || 
+                              frequencyOptions5G.find(f => f.value === currentFreq)?.channel;
+        if (currentChannel) {
+          const bandType = getBandType(iface.band || '');
+          const channelWidth = iface['channel-width'] || '20mhz';
+          const validChannels = getValidChannelsForWidth(channelWidth, bandType);
+          const country = (iface as any)['country'] || 'no_country_set';
+          let allowedChannels = validChannels;
+          if (country !== 'no_country_set' && countryFrequencyRules[country]) {
+            const countryRule = countryFrequencyRules[country];
+            const chs = bandType === '2ghz' ? countryRule.channels24G : countryRule.channels5G;
+            allowedChannels = validChannels.filter(ch => chs.includes(ch));
+          }
+          if (!allowedChannels.includes(currentChannel)) {
+            const newChannel = allowedChannels[0];
+            const newFreq = frequencyOptions24G.find(f => f.channel === newChannel) || 
+                           frequencyOptions5G.find(f => f.channel === newChannel);
+            if (newFreq) {
+              updated.frequency = newFreq.value;
+            }
+          }
+        }
+      }
+    }
+    
     if (field === 'country') {
       const currentFreq = iface.frequency;
-      if (currentFreq && value !== 'no country set') {
+      const freqMode = (iface as any)['frequency-mode'] || 'regulatory-domain';
+      if (currentFreq && value !== 'no_country_set' && freqMode !== 'superchannel') {
         const currentChannel = frequencyOptions24G.find(f => f.value === currentFreq)?.channel || 
                               frequencyOptions5G.find(f => f.value === currentFreq)?.channel;
         if (currentChannel && countryFrequencyRules[value]) {
@@ -1034,7 +1128,7 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
 
         <div className={styles.formRow}>
           <div className={styles.formGroup}>
-            <label className={styles.formLabel}>扫描列表</label>
+            <label className={styles.formLabel}>信道绑定</label>
             <Input
               value={(iface as any)['scan-list'] || 'default'}
               onChange={(e) => updateField('scan-list', e.target.value)}
@@ -1053,6 +1147,26 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
               <Option value="nv2-nstreme">NV2-Nstreme</Option>
               <Option value="nstreme">Nstreme</Option>
             </Select>
+          </div>
+        </div>
+
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>无线加密</label>
+            <Select
+              value={(iface as any)['security-profile'] || 'none'}
+              onChange={(value) => updateField('security-profile', value === 'none' ? '' : value)}
+              style={{ width: '100%' }}
+              disabled={iface['wireless-protocol'] !== '802.11'}
+              placeholder={iface['wireless-protocol'] !== '802.11' ? '仅802.11协议支持' : '选择加密配置'}
+            >
+              <Option value="none">无加密</Option>
+              {(securityProfiles || []).map((profile: SecurityProfileData) => (
+                <Option key={profile.name} value={profile.name}>{profile.name}</Option>
+              ))}
+            </Select>
+          </div>
+          <div className={styles.formGroup}>
           </div>
         </div>
       </div>
@@ -1079,7 +1193,7 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
           <div className={styles.formGroup}>
             <label className={styles.formLabel}>国家</label>
             <Select
-              value={(iface as any)['country'] || 'no country set'}
+              value={(iface as any)['country'] || 'no_country_set'}
               onChange={(value) => updateField('country', value)}
               style={{ width: '100%' }}
               showSearch
@@ -1439,7 +1553,8 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
                 onChange={(e) => updateField('tx-power', e.target.value)}
                 placeholder="-30 ~ 30"
                 addonAfter="dBm"
-                type="number"
+                type="text"
+                className={styles.hideSpinner}
               />
             </div>
           </div>

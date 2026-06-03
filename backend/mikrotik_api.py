@@ -373,7 +373,19 @@ class MikroTikAPI:
                 if length == 0:
                     break  # 空 word 表示句子结束
                 
-                data = self.socket.recv(length)
+                # TCP是流式协议，recv可能不会一次性返回所有数据，需要循环读取
+                data = b''
+                remaining = length
+                while remaining > 0:
+                    chunk = self.socket.recv(remaining)
+                    if not chunk:
+                        break
+                    data += chunk
+                    remaining -= len(chunk)
+                
+                if len(data) != length:
+                    print(f"[read_sentence] 数据不完整: 期望 {length} 字节, 实际 {len(data)} 字节")
+                    break
                 decoded = False
                 for encoding in ['utf-8', 'gbk', 'gb2312', 'latin-1']:
                     try:
@@ -1246,75 +1258,6 @@ class MikroTikAPI:
             print(f"解析日志行失败：{e}")
             return None
     
-    def download_log_file(self, local_dir: str = '.', device_mac: str = None) -> Tuple[bool, str, str]:
-        """通过FTP下载日志文件（一次性获取历史日志）
-        
-        Args:
-            local_dir: 本地保存目录
-            device_mac: 设备MAC地址，用于区分多设备日志
-            
-        Returns:
-            (成功与否, 消息, 本地文件路径)
-        """
-        ftp_host = self.host
-        ftp_port = 6000
-        ftp_user = self.username
-        ftp_password = self.password
-        remote_log_paths = ['/flash/log.0.txt', 'log.0.txt']
-        
-        os.makedirs(local_dir, exist_ok=True)
-        
-        if device_mac:
-            device_id = device_mac.replace(':', '_').replace('-', '_')
-            local_file_name = f"device_{device_id}.txt"
-        else:
-            local_file_name = f"device_unknown_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-        local_file_path = os.path.join(local_dir, local_file_name)
-        
-        try:
-            print(f"FTP 连接: {ftp_host}:{ftp_port}")
-            ftp = ftplib.FTP()
-            ftp.encoding = 'latin-1'
-            ftp.connect(ftp_host, ftp_port, timeout=10)
-            print(f"FTP 登录: {ftp_user}")
-            ftp.login(ftp_user, ftp_password if ftp_password else '')
-            print(f"✅ FTP连接成功：{ftp_host}:{ftp_port}")
-            
-            download_success = False
-            last_error = None
-            
-            for remote_log_path in remote_log_paths:
-                try:
-                    print(f"FTP 尝试下载: {remote_log_path} -> {local_file_path}")
-                    with open(local_file_path, 'wb') as f:
-                        ftp.retrbinary(f"RETR {remote_log_path}", f.write)
-                    print(f"✅ 日志文件下载完成：{local_file_path}")
-                    download_success = True
-                    break
-                except ftplib.error_perm as e:
-                    print(f"⚠️ 路径 {remote_log_path} 不存在或无权限: {e}")
-                    last_error = e
-                    continue
-                except Exception as e:
-                    print(f"⚠️ 路径 {remote_log_path} 下载失败: {e}")
-                    last_error = e
-                    continue
-            
-            ftp.quit()
-            
-            if download_success:
-                return True, "FTP 下载成功", local_file_path
-            else:
-                return False, f"FTP 下载失败: 所有路径都无法访问 ({'; '.join(remote_log_paths)})", ''
-            
-        except ftplib.error_perm as e:
-            print(f"❌ FTP权限错误: {e}（检查用户ftp权限/日志文件路径）")
-            return False, f"FTP 权限错误: {e}", ''
-        except Exception as e:
-            print(f"❌ 日志文件下载失败: {str(e)}")
-            traceback.print_exc()
-            return False, f"FTP 下载失败: {e}", ''
-    
     def get_log_updates(self, last_position: int = 0, local_file: str = None) -> Tuple[int, List[Dict[str, str]]]:
         """获取日志增量更新
         
@@ -1944,3 +1887,349 @@ class MikroTikAPI:
     def is_alive(self) -> bool:
         """检测API连接是否存活（基于 Keepalive 心跳机制）"""
         return self.keepalive_check()
+
+    # ==================== Bridge 相关方法 ====================
+
+    def get_bridges(self) -> Optional[List[Dict[str, Any]]]:
+        """获取桥接口列表
+        
+        Returns:
+            桥接口列表，每个条目包含 name, mac-address, mtu, arp, protocol-mode, vlan-filtering, running, disabled 等
+            返回 None 表示获取失败（连接异常），返回 [] 表示无桥接口
+        """
+        if not self.logged_in:
+            return None
+        
+        try:
+            self.write_sentence(['/interface/bridge/print'])
+            bridges = []
+            got_done = False
+            while True:
+                try:
+                    response = self.read_sentence(timeout=10)
+                except Exception:
+                    break
+                if '!done' in response:
+                    got_done = True
+                    break
+                if '!re' in response:
+                    bridge = {}
+                    for line in response:
+                        if line.startswith('='):
+                            parts = line[1:].split('=', 1)
+                            if len(parts) == 2:
+                                key, value = parts
+                                if key == 'debug-info':
+                                    continue
+                                bridge[key] = value
+                    if '.id' in bridge or 'name' in bridge:
+                        bridges.append(bridge)
+            if not got_done and not bridges:
+                return None
+            return bridges
+        except Exception as e:
+            logger.error(f"获取桥接口列表失败: {e}")
+            return None
+
+    def get_bridge_ports(self) -> Optional[List[Dict[str, Any]]]:
+        """获取桥接端口列表
+        
+        Returns:
+            桥接端口列表，每个条目包含 interface, bridge, pvid, path-cost, priority, edge, disabled 等
+            返回 None 表示获取失败（连接异常），返回 [] 表示无桥接端口
+        """
+        if not self.logged_in:
+            return None
+        
+        try:
+            self.write_sentence(['/interface/bridge/port/print'])
+            ports = []
+            got_done = False
+            while True:
+                try:
+                    response = self.read_sentence(timeout=10)
+                except Exception:
+                    break
+                if '!done' in response:
+                    got_done = True
+                    break
+                if '!re' in response:
+                    port = {}
+                    for line in response:
+                        if line.startswith('='):
+                            parts = line[1:].split('=', 1)
+                            if len(parts) == 2:
+                                key, value = parts
+                                if key == 'debug-info':
+                                    continue
+                                port[key] = value
+                    if '.id' in port or 'interface' in port:
+                        ports.append(port)
+            if not got_done and not ports:
+                return None
+            return ports
+        except Exception as e:
+            logger.error(f"获取桥接端口列表失败: {e}")
+            return None
+
+    def get_bridge_hosts(self) -> Optional[List[Dict[str, Any]]]:
+        """获取桥接主机表(MAC地址表)
+        
+        Returns:
+            主机列表，每个条目包含 mac-address, bridge, interface, vid, age, dynamic, local 等
+            返回 None 表示获取失败（连接异常），返回 [] 表示无主机记录
+        """
+        if not self.logged_in:
+            return None
+        
+        try:
+            self.write_sentence(['/interface/bridge/host/print'])
+            hosts = []
+            got_done = False
+            while True:
+                try:
+                    response = self.read_sentence(timeout=10)
+                except Exception:
+                    break
+                if '!done' in response:
+                    got_done = True
+                    break
+                if '!re' in response:
+                    host = {}
+                    for line in response:
+                        if line.startswith('='):
+                            parts = line[1:].split('=', 1)
+                            if len(parts) == 2:
+                                key, value = parts
+                                if key == 'debug-info':
+                                    continue
+                                host[key] = value
+                    if '.id' in host or 'mac-address' in host:
+                        hosts.append(host)
+            if not got_done and not hosts:
+                return None
+            return hosts
+        except Exception as e:
+            logger.error(f"获取桥接主机表失败: {e}")
+            return None
+
+    def add_bridge(self, name: str, **kwargs) -> Tuple[bool, str]:
+        """添加桥接口
+        
+        Args:
+            name: 桥接口名称
+            **kwargs: 其他可选参数（vlan-filtering, protocol-mode, arp 等）
+        
+        Returns:
+            (success, message)
+        """
+        if not self.logged_in:
+            return False, "未登录"
+        
+        try:
+            cmd = ['/interface/bridge/add', f'=name={name}']
+            for key, value in kwargs.items():
+                cmd.append(f'={key}={value}')
+            self.write_sentence(cmd)
+            
+            while True:
+                try:
+                    response = self.read_sentence(timeout=10)
+                except Exception:
+                    break
+                if '!done' in response:
+                    return True, "添加成功"
+                if '!trap' in response:
+                    error_msg = ''
+                    for line in response:
+                        if line.startswith('=message='):
+                            error_msg = line[9:]
+                    return False, error_msg or "添加失败"
+            return False, "操作超时"
+        except Exception as e:
+            logger.error(f"添加桥接口失败: {e}")
+            return False, str(e)
+
+    def edit_bridge(self, bridge_id: str, **kwargs) -> Tuple[bool, str]:
+        """编辑桥接口
+        
+        Args:
+            bridge_id: 桥接口的 .id 值
+            **kwargs: 要修改的字段
+        
+        Returns:
+            (success, message)
+        """
+        if not self.logged_in:
+            return False, "未登录"
+        
+        if not kwargs:
+            return True, "无变更"
+        
+        try:
+            cmd = ['/interface/bridge/set', f'=.id={bridge_id}']
+            for key, value in kwargs.items():
+                cmd.append(f'={key}={value}')
+            self.write_sentence(cmd)
+            
+            while True:
+                try:
+                    response = self.read_sentence(timeout=10)
+                except Exception:
+                    break
+                if '!done' in response:
+                    return True, "修改成功"
+                if '!trap' in response:
+                    error_msg = ''
+                    for line in response:
+                        if line.startswith('=message='):
+                            error_msg = line[9:]
+                    return False, error_msg or "修改失败"
+            return False, "操作超时"
+        except Exception as e:
+            logger.error(f"编辑桥接口失败: {e}")
+            return False, str(e)
+
+    def delete_bridge(self, bridge_id: str) -> Tuple[bool, str]:
+        """删除桥接口
+        
+        Args:
+            bridge_id: 桥接口的 .id 值
+        
+        Returns:
+            (success, message)
+        """
+        if not self.logged_in:
+            return False, "未登录"
+        
+        try:
+            self.write_sentence(['/interface/bridge/remove', f'=.id={bridge_id}'])
+            
+            while True:
+                try:
+                    response = self.read_sentence(timeout=10)
+                except Exception:
+                    break
+                if '!done' in response:
+                    return True, "删除成功"
+                if '!trap' in response:
+                    error_msg = ''
+                    for line in response:
+                        if line.startswith('=message='):
+                            error_msg = line[9:]
+                    return False, error_msg or "删除失败"
+            return False, "操作超时"
+        except Exception as e:
+            logger.error(f"删除桥接口失败: {e}")
+            return False, str(e)
+
+    def add_bridge_port(self, interface: str, bridge: str, **kwargs) -> Tuple[bool, str]:
+        """添加桥接端口
+        
+        Args:
+            interface: 接口名称
+            bridge: 所属桥接口名称
+            **kwargs: 其他可选参数（pvid, path-cost, priority, edge 等）
+        
+        Returns:
+            (success, message)
+        """
+        if not self.logged_in:
+            return False, "未登录"
+        
+        try:
+            cmd = ['/interface/bridge/port/add', f'=interface={interface}', f'=bridge={bridge}']
+            for key, value in kwargs.items():
+                cmd.append(f'={key}={value}')
+            self.write_sentence(cmd)
+            
+            while True:
+                try:
+                    response = self.read_sentence(timeout=10)
+                except Exception:
+                    break
+                if '!done' in response:
+                    return True, "添加成功"
+                if '!trap' in response:
+                    error_msg = ''
+                    for line in response:
+                        if line.startswith('=message='):
+                            error_msg = line[9:]
+                    return False, error_msg or "添加失败"
+            return False, "操作超时"
+        except Exception as e:
+            logger.error(f"添加桥接端口失败: {e}")
+            return False, str(e)
+
+    def edit_bridge_port(self, port_id: str, **kwargs) -> Tuple[bool, str]:
+        """编辑桥接端口
+        
+        Args:
+            port_id: 端口的 .id 值
+            **kwargs: 要修改的字段
+        
+        Returns:
+            (success, message)
+        """
+        if not self.logged_in:
+            return False, "未登录"
+        
+        if not kwargs:
+            return True, "无变更"
+        
+        try:
+            cmd = ['/interface/bridge/port/set', f'=.id={port_id}']
+            for key, value in kwargs.items():
+                cmd.append(f'={key}={value}')
+            self.write_sentence(cmd)
+            
+            while True:
+                try:
+                    response = self.read_sentence(timeout=10)
+                except Exception:
+                    break
+                if '!done' in response:
+                    return True, "修改成功"
+                if '!trap' in response:
+                    error_msg = ''
+                    for line in response:
+                        if line.startswith('=message='):
+                            error_msg = line[9:]
+                    return False, error_msg or "修改失败"
+            return False, "操作超时"
+        except Exception as e:
+            logger.error(f"编辑桥接端口失败: {e}")
+            return False, str(e)
+
+    def delete_bridge_port(self, port_id: str) -> Tuple[bool, str]:
+        """删除桥接端口
+        
+        Args:
+            port_id: 端口的 .id 值
+        
+        Returns:
+            (success, message)
+        """
+        if not self.logged_in:
+            return False, "未登录"
+        
+        try:
+            self.write_sentence(['/interface/bridge/port/remove', f'=.id={port_id}'])
+            
+            while True:
+                try:
+                    response = self.read_sentence(timeout=10)
+                except Exception:
+                    break
+                if '!done' in response:
+                    return True, "删除成功"
+                if '!trap' in response:
+                    error_msg = ''
+                    for line in response:
+                        if line.startswith('=message='):
+                            error_msg = line[9:]
+                    return False, error_msg or "删除失败"
+            return False, "操作超时"
+        except Exception as e:
+            logger.error(f"删除桥接端口失败: {e}")
+            return False, str(e)

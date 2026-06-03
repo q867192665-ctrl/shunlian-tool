@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Button, message as antMessage } from 'antd';
-import { ClearOutlined, FontSizeOutlined, DisconnectOutlined, PlayCircleOutlined } from '@ant-design/icons';
+import { ClearOutlined, FontSizeOutlined, DisconnectOutlined } from '@ant-design/icons';
 import { useAppState } from '../../contexts/AppContext';
+import { useWebSocket } from '../../contexts/WebSocketContext';
 import { useTerminal } from '../../contexts/TerminalContext';
 import styles from './TerminalPage.module.css';
 
@@ -12,11 +13,13 @@ import '@xterm/xterm/css/xterm.css';
 
 export const TerminalPage: React.FC = () => {
   const { router } = useAppState();
+  const { deviceOffline } = useWebSocket();
   const { isConnected, isConnecting, connectTerminal, disconnectTerminal, sendInput, onReplayBuffer } = useTerminal();
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [fontSize, setFontSize] = useState(14);
+  const autoConnectedRef = useRef(false);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -98,6 +101,29 @@ export const TerminalPage: React.FC = () => {
     }
   }, [fontSize]);
 
+  // 进入终端页面时自动连接
+  useEffect(() => {
+    if (router?.ipAddress && !deviceOffline && !autoConnectedRef.current) {
+      autoConnectedRef.current = true;
+      connectTerminal({
+        ipAddress: router.ipAddress,
+        username: router.username,
+        password: router.password,
+        name: router.name,
+        status: router.status,
+        model: router.model,
+        osVersion: router.osVersion,
+      });
+    }
+  }, [router?.ipAddress, deviceOffline]);
+
+  // 设备离线时重置自动连接标记
+  useEffect(() => {
+    if (deviceOffline) {
+      autoConnectedRef.current = false;
+    }
+  }, [deviceOffline]);
+
   const handleClear = () => {
     xtermRef.current?.clear();
   };
@@ -105,23 +131,7 @@ export const TerminalPage: React.FC = () => {
   const handleDisconnect = () => {
     disconnectTerminal();
     xtermRef.current?.clear();
-  };
-
-  const handleConnect = () => {
-    if (!router) {
-      antMessage.error('请先登录设备');
-      return;
-    }
-    xtermRef.current?.clear();
-    connectTerminal({
-      ipAddress: router.ipAddress,
-      username: router.username,
-      password: router.password,
-      name: router.name,
-      status: router.status,
-      model: router.model,
-      osVersion: router.osVersion,
-    });
+    autoConnectedRef.current = false;
   };
 
   return (
@@ -131,6 +141,7 @@ export const TerminalPage: React.FC = () => {
           <span className={styles.headerTitle}>Terminal</span>
           <span className={styles.deviceInfo}>{router?.name || router?.ipAddress || '未连接'}</span>
           {isConnected && <span className={styles.connectedBadge}>● 已连接</span>}
+          {isConnecting && <span className={styles.connectingBadge}>连接中...</span>}
         </div>
         <div className={styles.headerRight}>
           <span className={styles.fontSizeLabel}>
@@ -152,18 +163,7 @@ export const TerminalPage: React.FC = () => {
           >
             清屏
           </Button>
-          {!isConnected ? (
-            <Button
-              type="primary"
-              size="small"
-              icon={<PlayCircleOutlined />}
-              onClick={handleConnect}
-              loading={isConnecting}
-              disabled={!router?.ipAddress}
-            >
-              连接
-            </Button>
-          ) : (
+          {isConnected && (
             <Button
               danger
               size="small"

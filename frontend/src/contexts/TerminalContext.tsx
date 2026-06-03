@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useRef, useState, useCallback } from 'react';
+import React, { createContext, useContext, useRef, useState, useCallback, useEffect } from 'react';
 import { message as antMessage } from 'antd';
 import type { RouterInfo } from '../types/router';
 
@@ -24,12 +24,23 @@ const TerminalContext = createContext<TerminalState>({
   onReplayBuffer: () => {},
 });
 
-export const TerminalProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+interface TerminalProviderProps {
+  children: React.ReactNode;
+  router: RouterInfo | null;
+  deviceOffline: boolean;
+}
+
+export const TerminalProvider: React.FC<TerminalProviderProps> = ({ children, router, deviceOffline }) => {
   const wsRef = useRef<WebSocket | null>(null);
   const bufferRef = useRef<string>('');
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const replayCallbackRef = useRef<((data: string) => void) | null>(null);
+  const routerRef = useRef<RouterInfo | null>(router);
+
+  useEffect(() => {
+    routerRef.current = router;
+  }, [router]);
 
   const sendInput = useCallback((data: string) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -46,17 +57,16 @@ export const TerminalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       wsRef.current = null;
     }
     setIsConnected(false);
+    setIsConnecting(false);
     bufferRef.current = '';
   }, []);
 
-  const connectTerminal = useCallback((router: RouterInfo) => {
-    if (!router?.ipAddress || !router?.username || !router?.password) {
-      antMessage.error('请先登录设备');
+  const connectTerminal = useCallback((r: RouterInfo) => {
+    if (!r?.ipAddress || !r?.username || !r?.password) {
       return;
     }
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      antMessage.info('终端已连接');
       return;
     }
 
@@ -64,7 +74,6 @@ export const TerminalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     bufferRef.current = '';
 
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // 开发环境（Vite 5173）使用代理路径，生产环境直接连接 32996 端口
     const isDev = window.location.port === '5173';
     const wsUrl = isDev ? `${wsProtocol}//${window.location.host}/ws` : `${wsProtocol}//${window.location.hostname}:32996`;
     const ws = new WebSocket(wsUrl);
@@ -72,10 +81,12 @@ export const TerminalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
+      bufferRef.current = '\r\n正在连接设备...\r\n';
+      replayCallbackRef.current?.(bufferRef.current);
       ws.send(JSON.stringify({
-        ip: router.ipAddress,
-        username: router.username,
-        password: router.password,
+        ip: r.ipAddress,
+        username: r.username,
+        password: r.password,
         action: 'terminal_connect'
       }));
     };
@@ -88,14 +99,18 @@ export const TerminalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             if (data.status === 'connected') {
               setIsConnected(true);
               setIsConnecting(false);
+              const successMsg = `\r\n登录成功！已连接到设备 ${r.ipAddress}\r\n\r\n`;
+              bufferRef.current += successMsg;
+              replayCallbackRef.current?.(successMsg);
             } else if (data.status === 'output') {
               bufferRef.current += data.data;
               replayCallbackRef.current?.(data.data);
             } else if (data.status === 'error') {
               setIsConnected(false);
               setIsConnecting(false);
-              bufferRef.current += `\r\nError: ${data.message}\r\n`;
-              replayCallbackRef.current?.(`\r\nError: ${data.message}\r\n`);
+              const errorMsg = `\r\n登录失败: ${data.message}\r\n`;
+              bufferRef.current += errorMsg;
+              replayCallbackRef.current?.(errorMsg);
             }
           }
         } catch {
@@ -117,11 +132,34 @@ export const TerminalProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     ws.onerror = () => {
       setIsConnected(false);
       setIsConnecting(false);
-      antMessage.error('终端连接失败');
     };
 
     wsRef.current = ws;
   }, []);
+
+  // 设备断线时自动断开终端
+  useEffect(() => {
+    if (deviceOffline) {
+      disconnectTerminal();
+    }
+  }, [deviceOffline]);
+
+  // 设备重连成功后自动重新连接终端
+  const deviceOfflineRef = useRef(deviceOffline);
+  useEffect(() => {
+    deviceOfflineRef.current = deviceOffline;
+  }, [deviceOffline]);
+
+  useEffect(() => {
+    if (!deviceOffline && routerRef.current?.ipAddress && !wsRef.current) {
+      const timer = setTimeout(() => {
+        if (!deviceOfflineRef.current && routerRef.current && !wsRef.current) {
+          connectTerminal(routerRef.current);
+        }
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [deviceOffline]);
 
   const getBuffer = useCallback(() => {
     return bufferRef.current;

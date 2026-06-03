@@ -179,9 +179,9 @@ interface DeviceInfoData {
 
 export const DashboardPage: React.FC = () => {
   const { router } = useAppState();
-  const { deviceOffline } = useWebSocket();
+  const { deviceOffline, interfaces: wsInterfaces, loading: wsLoading } = useWebSocket();
   const [deviceInfo, setDeviceInfo] = useState<DeviceInfoData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [deviceInfoLoading, setDeviceInfoLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const { interfaces, loading: trafficLoading, error: trafficError } = useTrafficMonitor(router);
@@ -212,10 +212,11 @@ export const DashboardPage: React.FC = () => {
       const data = await resp.json();
       if (data.status === 'success' && data.info) {
         setDeviceInfo(data.info);
-        setLoading(false);
+        setDeviceInfoLoading(false);
       }
     } catch (e) {
       console.error('Failed to fetch device info:', e);
+      setDeviceInfoLoading(false);
     }
   }, [router?.ipAddress, deviceOffline]);
 
@@ -240,7 +241,10 @@ export const DashboardPage: React.FC = () => {
     }
   }, [trafficError]);
 
-  if (loading && !deviceInfo) {
+  const hasAnyData = deviceInfo || wsInterfaces.length > 0;
+  const isFullyLoading = deviceInfoLoading && wsLoading && !hasAnyData;
+
+  if (isFullyLoading) {
     return (
       <div className={styles.container}>
         <div className={styles.loading}>加载仪表盘数据中...</div>
@@ -248,7 +252,7 @@ export const DashboardPage: React.FC = () => {
     );
   }
 
-  if (error && !deviceInfo) {
+  if (error && !deviceInfo && wsInterfaces.length === 0) {
     return (
       <div className={styles.container}>
         <div className={styles.error}>
@@ -258,11 +262,9 @@ export const DashboardPage: React.FC = () => {
     );
   }
 
-  if (!deviceInfo) return null;
-
-  const cpuLoad = deviceInfo.cpu_load_num || 0;
-  const memoryPercentage = deviceInfo.memory_percentage || 0;
-  const hddPercentage = deviceInfo.hdd_percentage || 0;
+  const cpuLoad = deviceInfo?.cpu_load_num || 0;
+  const memoryPercentage = deviceInfo?.memory_percentage || 0;
+  const hddPercentage = deviceInfo?.hdd_percentage || 0;
 
   const activeInterfaces = interfaces.filter((i) => !i.disabled && i.running);
   const inactiveInterfaces = interfaces.filter((i) => i.disabled || !i.running);
@@ -282,19 +284,21 @@ export const DashboardPage: React.FC = () => {
           title="CPU使用率"
           percentage={cpuLoad}
           details={
-            deviceInfo.cpu_count && deviceInfo.cpu_count !== '--'
-              ? `${deviceInfo.board || ''} (${deviceInfo.cpu_count} 核${parseInt(deviceInfo.cpu_count) > 1 ? '心' : ''})`
-              : `${cpuLoad}% 利用率`
+            deviceInfo
+              ? (deviceInfo.cpu_count && deviceInfo.cpu_count !== '--'
+                ? `${deviceInfo.cpu_count} 核${parseInt(deviceInfo.cpu_count) > 1 ? '心' : ''}`
+                : `${cpuLoad}% 利用率`)
+              : '加载中...'
           }
           icon={<DashboardOutlined />}
         />
         <ProgressStatCard
           title="内存"
           percentage={memoryPercentage}
-          details={`${deviceInfo.memory_used} / ${deviceInfo.memory_total}`}
+          details={deviceInfo ? `${deviceInfo.memory_used} / ${deviceInfo.memory_total}` : '加载中...'}
           icon={<DatabaseOutlined />}
         />
-        {hddPercentage > 0 && (
+        {deviceInfo && hddPercentage > 0 && (
           <ProgressStatCard
             title="磁盘"
             percentage={hddPercentage}
@@ -334,13 +338,18 @@ export const DashboardPage: React.FC = () => {
           </div>
         </div>
         <div className={styles.interfacesList}>
-          {interfaces
-            .filter((iface) => {
-              const isActive = !iface.disabled && iface.running;
-              if (isActive) return showActiveInterfaces;
-              return showInactiveInterfaces;
-            })
-            .map((iface) => (
+          {interfaces.length === 0 && wsLoading ? (
+            <div className={styles.loading}>加载网络接口数据中...</div>
+          ) : interfaces.length === 0 ? (
+            <div className={styles.loading}>暂无网络接口数据</div>
+          ) : (
+            interfaces
+              .filter((iface) => {
+                const isActive = !iface.disabled && iface.running;
+                if (isActive) return showActiveInterfaces;
+                return showInactiveInterfaces;
+              })
+              .map((iface) => (
               <InterfaceItem
                 key={iface.name}
                 name={iface.name}
@@ -352,7 +361,8 @@ export const DashboardPage: React.FC = () => {
                 txRate={iface.tx_rate}
                 macAddress={iface.mac_address}
               />
-            ))}
+            ))
+          )}
         </div>
       </div>
     </div>

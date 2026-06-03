@@ -447,23 +447,23 @@ export const FirewallPage: React.FC = () => {
           <h2 className={styles.sectionTitle}>过滤规则</h2>
           <div className={styles.table}>
             <div className={styles.tableHeader}>
-              <div className={styles.tableCell}>链</div>
-              <div className={styles.tableCell}>动作</div>
-              <div className={styles.tableCell}>协议</div>
-              <div className={styles.tableCell}>源地址</div>
-              <div className={styles.tableCell}>目标地址</div>
-              <div className={styles.tableCell}>接口</div>
-              <div className={styles.tableCell}>流量</div>
-              <div className={styles.tableCell}>备注</div>
+              <div className={styles.tableCellCenter}>链</div>
+              <div className={styles.tableCellCenter}>动作</div>
+              <div className={styles.tableCellCenter}>协议</div>
+              <div className={styles.tableCellCenter}>源地址</div>
+              <div className={styles.tableCellCenter}>目标地址</div>
+              <div className={styles.tableCellCenter}>接口</div>
+              <div className={styles.tableCellCenter}>流量</div>
+              <div className={styles.tableCellCenter}>备注</div>
             </div>
             {filterRules.map((rule) => (
               <div key={rule.id} className={`${styles.tableRow} ${rule.disabled ? styles.disabled : ''}`}>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   <span className={`${styles.badge} ${styles.badgeInfo}`}>
                     {rule.chain}
                   </span>
                 </div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   <span className={`${styles.badge} ${
                     rule.action === 'accept' ? styles.badgeSuccess :
                     rule.action === 'drop' || rule.action === 'reject' ? styles.badgeDanger :
@@ -472,8 +472,8 @@ export const FirewallPage: React.FC = () => {
                     {rule.action}
                   </span>
                 </div>
-                <div className={styles.tableCell}>{rule.protocol || '—'}</div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>{rule.protocol || '—'}</div>
+                <div className={styles.tableCellCenter}>
                   {rule.srcAddress ? (
                     <span
                       className={`${styles.monospace} ${styles.copyable}`}
@@ -485,7 +485,7 @@ export const FirewallPage: React.FC = () => {
                   ) : '—'}
                   {rule.srcPort && <div className={styles.portText}>:{rule.srcPort}</div>}
                 </div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   {rule.dstAddress ? (
                     <span
                       className={`${styles.monospace} ${styles.copyable}`}
@@ -497,17 +497,17 @@ export const FirewallPage: React.FC = () => {
                   ) : '—'}
                   {rule.dstPort && <div className={styles.portText}>:{rule.dstPort}</div>}
                 </div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   {rule.inInterface && <div>In: {rule.inInterface}</div>}
                   {rule.outInterface && <div>Out: {rule.outInterface}</div>}
                   {!rule.inInterface && !rule.outInterface && '—'}
                 </div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   <div>{formatBytes(rule.bytes || 0)}</div>
                   <div className={styles.textMuted}>{rule.packets || 0} pkts</div>
                 </div>
                 <div
-                  className={`${styles.tableCell} ${rule.comment ? styles.copyable : ''}`}
+                  className={`${styles.tableCellCenter} ${rule.comment ? styles.copyable : ''}`}
                   onClick={() => rule.comment && handleCopyToClipboard(rule.comment, '备注')}
                   title={rule.comment ? '点击复制' : ''}
                 >
@@ -561,29 +561,29 @@ export const FirewallPage: React.FC = () => {
           <h2 className={styles.sectionTitle}>NAT规则</h2>
           <div className={styles.table}>
             <div className={styles.tableHeader}>
-              <div className={styles.tableCell}>链</div>
-              <div className={styles.tableCell}>动作</div>
-              <div className={styles.tableCell}>协议</div>
-              <div className={styles.tableCell}>源地址</div>
-              <div className={styles.tableCell}>目标地址</div>
-              <div className={styles.tableCell}>转换</div>
-              <div className={styles.tableCell}>流量</div>
-              <div className={styles.tableCell}>备注</div>
+              <div className={styles.tableCellCenter}>链</div>
+              <div className={styles.tableCellCenter}>动作</div>
+              <div className={styles.tableCellCenter}>协议</div>
+              <div className={styles.tableCellCenter}>源地址</div>
+              <div className={styles.tableCellCenter}>目标地址</div>
+              <div className={styles.tableCellCenter}>转换</div>
+              <div className={styles.tableCellCenter}>流量</div>
+              <div className={styles.tableCellCenter}>备注</div>
             </div>
             {natRules.map((rule) => (
               <div key={rule.id} className={`${styles.tableRow} ${rule.disabled ? styles.disabled : ''}`}>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   <span className={`${styles.badge} ${styles.badgeInfo}`}>
                     {rule.chain}
                   </span>
                 </div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   <span className={`${styles.badge} ${styles.badgeSuccess}`}>
                     {rule.action}
                   </span>
                 </div>
-                <div className={styles.tableCell}>{rule.protocol || '—'}</div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>{rule.protocol || '—'}</div>
+                <div className={styles.tableCellCenter}>
                   {rule.srcAddress ? (
                     <span
                       className={`${styles.monospace} ${styles.copyable}`}
@@ -595,7 +595,7 @@ export const FirewallPage: React.FC = () => {
                   ) : '—'}
                   {rule.srcPort && <div className={styles.portText}>:{rule.srcPort}</div>}
                 </div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   {rule.dstAddress ? (
                     <span
                       className={`${styles.monospace} ${styles.copyable}`}
@@ -607,17 +607,17 @@ export const FirewallPage: React.FC = () => {
                   ) : '—'}
                   {rule.dstPort && <div className={styles.portText}>:{rule.dstPort}</div>}
                 </div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   {rule.toAddresses && <div>→ {rule.toAddresses}</div>}
                   {rule.toPorts && <div className={styles.portText}>:{rule.toPorts}</div>}
                   {!rule.toAddresses && !rule.toPorts && '—'}
                 </div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   <div>{formatBytes(rule.bytes || 0)}</div>
                   <div className={styles.textMuted}>{rule.packets || 0} 包</div>
                 </div>
                 <div
-                  className={`${styles.tableCell} ${rule.comment ? styles.copyable : ''}`}
+                  className={`${styles.tableCellCenter} ${rule.comment ? styles.copyable : ''}`}
                   onClick={() => rule.comment && handleCopyToClipboard(rule.comment, '备注')}
                   title={rule.comment ? '点击复制' : ''}
                 >
@@ -671,48 +671,48 @@ export const FirewallPage: React.FC = () => {
           <h2 className={styles.sectionTitle}>Mangle规则</h2>
           <div className={styles.table}>
             <div className={styles.tableHeader}>
-              <div className={styles.tableCell}>链</div>
-              <div className={styles.tableCell}>动作</div>
-              <div className={styles.tableCell}>协议</div>
-              <div className={styles.tableCell}>源地址</div>
-              <div className={styles.tableCell}>目标地址</div>
-              <div className={styles.tableCell}>标记</div>
-              <div className={styles.tableCell}>流量</div>
-              <div className={styles.tableCell}>备注</div>
+              <div className={styles.tableCellCenter}>链</div>
+              <div className={styles.tableCellCenter}>动作</div>
+              <div className={styles.tableCellCenter}>协议</div>
+              <div className={styles.tableCellCenter}>源地址</div>
+              <div className={styles.tableCellCenter}>目标地址</div>
+              <div className={styles.tableCellCenter}>标记</div>
+              <div className={styles.tableCellCenter}>流量</div>
+              <div className={styles.tableCellCenter}>备注</div>
             </div>
             {mangleRules.map((rule) => (
               <div key={rule.id} className={`${styles.tableRow} ${rule.disabled ? styles.disabled : ''}`}>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   <span className={`${styles.badge} ${styles.badgeInfo}`}>
                     {rule.chain}
                   </span>
                 </div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   <span className={`${styles.badge} ${styles.badgeWarning}`}>
                     {rule.action}
                   </span>
                 </div>
-                <div className={styles.tableCell}>{rule.protocol || '—'}</div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>{rule.protocol || '—'}</div>
+                <div className={styles.tableCellCenter}>
                   {rule.srcAddress ? (
                     <span className={styles.monospace}>{rule.srcAddress}</span>
                   ) : '—'}
                 </div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   {rule.dstAddress ? (
                     <span className={styles.monospace}>{rule.dstAddress}</span>
                   ) : '—'}
                 </div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   {rule.newRoutingMark && <div>路由: {rule.newRoutingMark}</div>}
                   {rule.newPacketMark && <div>数据包: {rule.newPacketMark}</div>}
                   {!rule.newRoutingMark && !rule.newPacketMark && '—'}
                 </div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   <div>{formatBytes(rule.bytes || 0)}</div>
                   <div className={styles.textMuted}>{rule.packets || 0} 包</div>
                 </div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   <span className={styles.commentText}>{rule.comment || '—'}</span>
                 </div>
               </div>
@@ -765,21 +765,21 @@ export const FirewallPage: React.FC = () => {
           <h2 className={styles.sectionTitle}>地址列表</h2>
           <div className={styles.table}>
             <div className={styles.tableHeader}>
-              <div className={styles.tableCell}>列表</div>
-              <div className={styles.tableCell}>地址</div>
-              <div className={styles.tableCell}>创建时间</div>
-              <div className={styles.tableCell}>超时</div>
-              <div className={styles.tableCell}>类型</div>
-              <div className={styles.tableCell}>备注</div>
+              <div className={styles.tableCellCenter}>列表</div>
+              <div className={styles.tableCellCenter}>地址</div>
+              <div className={styles.tableCellCenter}>创建时间</div>
+              <div className={styles.tableCellCenter}>超时</div>
+              <div className={styles.tableCellCenter}>类型</div>
+              <div className={styles.tableCellCenter}>备注</div>
             </div>
             {addressLists.map((item) => (
               <div key={item.id} className={`${styles.tableRow} ${item.disabled ? styles.disabled : ''}`}>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   <span className={`${styles.badge} ${styles.badgeInfo}`}>
                     {item.list}
                   </span>
                 </div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   <span
                     className={`${styles.monospace} ${styles.copyable}`}
                     onClick={() => handleCopyToClipboard(item.address, '地址')}
@@ -788,14 +788,14 @@ export const FirewallPage: React.FC = () => {
                     {item.address}
                   </span>
                 </div>
-                <div className={styles.tableCell}>{item.creationTime || '—'}</div>
-                <div className={styles.tableCell}>{item.timeout || '—'}</div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>{item.creationTime || '—'}</div>
+                <div className={styles.tableCellCenter}>{item.timeout || '—'}</div>
+                <div className={styles.tableCellCenter}>
                   <span className={`${styles.badge} ${item.dynamic ? styles.badgeWarning : styles.badgeSuccess}`}>
                     {item.dynamic ? '动态' : '静态'}
                   </span>
                 </div>
-                <div className={styles.tableCell}>
+                <div className={styles.tableCellCenter}>
                   <span className={styles.commentText}>{item.comment || '—'}</span>
                 </div>
               </div>

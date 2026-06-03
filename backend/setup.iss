@@ -2,8 +2,8 @@
 ; 使用前请先运行 build_all.bat 生成 exe 文件
 
 #define AppName "瞬联调试工具"
-#define AppVersion "1.0.5.1"
-#define AppPublisher "瞬联调试工具"
+#define AppVersion "1.0.5.6"
+#define AppPublisher "上海瞬联数创通信有限公司"
 #define AppExeName "ShunLianTool.exe"
 #define BackendExeName "shunlian_backend.exe"
 #define GuardianExeName "shunlian_guardian.exe"

@@ -5,7 +5,7 @@ import sys
 import os
 import shutil
 
-os.chdir(r'e:\程序\mikrotik-manager')
+os.chdir(r'e:\程序\mikrotik-manager\backend')
 
 # 清理
 for d in ['build', 'dist']:
@@ -97,7 +97,7 @@ if os.path.exists(slsc_src):
     shutil.copy2(slsc_src, slsc_dst)
     print(f'  复制并重命名：SLSCtools.exe -> ct_helper.exe')
 else:
-    print(f'  警告：SLSCtools.exe 不存在，请确保该文件位于项目根目录下')复制: {f}')
+    print('  警告：SLSCtools.exe 不存在，请确保该文件位于项目根目录下')
 static_dst = os.path.join(setup_dir, 'static')
 if os.path.exists(static_dst):
     shutil.rmtree(static_dst)
@@ -107,7 +107,7 @@ print('  复制: static/')
 # Inno Setup
 print('[6/6] 编译安装包...')
 iscc = r'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
-r = subprocess.run([iscc, r'e:\程序\mikrotik-manager\setup.iss'], capture_output=True)
+r = subprocess.run([iscc, r'e:\程序\mikrotik-manager\backend\setup.iss'], capture_output=True)
 if r.returncode != 0:
     print('[错误] Inno Setup 编译失败')
     print(r.stdout.decode('gbk', errors='replace')[-2000:])

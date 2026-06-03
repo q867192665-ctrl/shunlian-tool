@@ -119,6 +119,118 @@ interface_api_lock: threading.Lock = threading.Lock()
 device_download_status: dict[str, bool] = {}
 download_status_lock: threading.Lock = threading.Lock()
 
+# 存储桥接口轮询任务的API连接（操作处理复用此连接，避免创建第二个连接导致并发冲突）
+bridge_polling_api_connections: dict[str, MikroTikAPI] = {}
+bridge_polling_api_lock: threading.Lock = threading.Lock()
+
+# 存储桥接口操作的备用API连接（仅在轮询连接不可用时使用）
+bridge_action_api_connections: dict[str, MikroTikAPI] = {}
+bridge_action_api_lock: threading.Lock = threading.Lock()
+
+ip_addresses_polling_api_connections: dict[str, MikroTikAPI] = {}
+ip_addresses_polling_api_lock: threading.Lock = threading.Lock()
+
+# ==================== 桥接口操作API连接管理 ====================
+
+def get_bridge_action_api(device_ip: str, username: str, password: str) -> MikroTikAPI:
+    """获取桥接口操作的API连接（创建独立连接，不复用轮询连接以避免线程安全问题）"""
+    api = MikroTikAPI(device_ip, username, password, port=8728, use_ssl=False)
+    success, message = api.login()
+    if success:
+        return api
+    else:
+        raise ConnectionError(f'连接失败: {message}')
+
+
+def register_bridge_polling_api(device_ip: str, api: MikroTikAPI) -> None:
+    """注册桥接口轮询任务的API连接，供操作处理复用"""
+    with bridge_polling_api_lock:
+        bridge_polling_api_connections[device_ip] = api
+
+
+def unregister_bridge_polling_api(device_ip: str) -> None:
+    """移除桥接口轮询任务的API连接"""
+    with bridge_polling_api_lock:
+        bridge_polling_api_connections.pop(device_ip, None)
+
+
+def close_bridge_action_api(device_ip: str) -> None:
+    """关闭并移除桥接口操作的API连接"""
+    with bridge_action_api_lock:
+        if device_ip in bridge_action_api_connections:
+            api = bridge_action_api_connections.pop(device_ip)
+            try:
+                api.close()
+            except:
+                pass
+
+
+# ==================== IP地址轮询API连接管理 ====================
+
+def get_ip_address_action_api(device_ip: str, username: str, password: str) -> MikroTikAPI:
+    """获取IP地址操作的API连接（创建独立连接，不复用轮询连接以避免线程安全问题）"""
+    api = MikroTikAPI(device_ip, username, password, port=8728, use_ssl=False)
+    success, message = api.login()
+    if success:
+        return api
+    else:
+        raise ConnectionError(f'连接失败: {message}')
+
+
+def register_ip_addresses_polling_api(device_ip: str, api: MikroTikAPI) -> None:
+    """注册IP地址轮询任务的API连接"""
+    with ip_addresses_polling_api_lock:
+        ip_addresses_polling_api_connections[device_ip] = api
+
+
+def unregister_ip_addresses_polling_api(device_ip: str) -> None:
+    """移除IP地址轮询任务的API连接"""
+    with ip_addresses_polling_api_lock:
+        ip_addresses_polling_api_connections.pop(device_ip, None)
+
+
+def get_ip_addresses_sync(api: MikroTikAPI, read_timeout: int = 3) -> tuple[list[dict[str, str]] | None, str | None]:
+    """获取IP地址列表（同步版本，模块级别函数）"""
+    addresses = []
+    try:
+        api.write_sentence(['/ip/address/print'])
+        
+        while True:
+            try:
+                response = api.read_sentence(timeout=read_timeout)
+            except Exception as e:
+                return None, str(e)
+            
+            if '!done' in response:
+                break
+            if '!trap' in response:
+                break
+            if '!re' in response:
+                addr = {}
+                for line in response:
+                    if line.startswith('='):
+                        parts = line[1:].split('=', 1)
+                        if len(parts) == 2:
+                            key, value = parts
+                            addr[key] = value
+                
+                if addr:
+                    addresses.append({
+                        '.id': addr.get('.id', ''),
+                        'address': addr.get('address', '--'),
+                        'network': addr.get('network', '--'),
+                        'interface': addr.get('interface', '--'),
+                        'name': addr.get('name', ''),
+                        'disabled': addr.get('disabled', 'false'),
+                        'dynamic': addr.get('dynamic', 'false'),
+                        'comment': addr.get('comment', '')
+                    })
+        
+        return addresses, None
+    except Exception as e:
+        return None, str(e)
+
+
 # ==================== 无线接口获取函数 ====================
 
 def get_wireless_interfaces_sync(api: MikroTikAPI, read_timeout: int = 3) -> tuple[list[dict[str, str | bool]] | None, str | None]:
@@ -1083,7 +1195,7 @@ async def handle_interface_polling_single_conn(
         await traffic_manager.start_send_task(websocket)
         
         polling_task = asyncio.create_task(
-            interface_polling_task_with_traffic_single_conn(device_ip, websocket, mt_api, traffic_manager, stop_event)
+            interface_polling_task_with_traffic_single_conn(device_ip, websocket, mt_api, traffic_manager, stop_event, username, password, polling_tasks, stop_events)
         )
         polling_tasks['interface'] = polling_task
         
@@ -1104,7 +1216,11 @@ async def interface_polling_task_with_traffic_single_conn(
     websocket: WebSocketConn, 
     mt_api: MikroTikAPI, 
     traffic_manager: TrafficMonitorManager,
-    stop_event: asyncio.Event
+    stop_event: asyncio.Event,
+    username: str = '',
+    password: str = '',
+    polling_tasks: dict[str, asyncio.Task] | None = None,
+    stop_events: dict[str, asyncio.Event] | None = None
 ) -> None:
     """接口列表轮询任务（带流量监控，单连接模型）"""
     consecutive_errors = 0
@@ -1179,13 +1295,228 @@ async def interface_polling_task_with_traffic_single_conn(
                 message = await asyncio.wait_for(websocket.recv(), timeout=INTERFACE_INTERVAL)
                 data = json.loads(message)
                 action = data.get('action')
+                print(f"[接口轮询] 收到消息 action={action}")
                 
                 if action == 'add_ip_address':
-                    await handle_add_ip_address(websocket, device_ip, mt_api.username, mt_api.password, data)
+                    try:
+                        api = get_ip_address_action_api(device_ip, mt_api.username, mt_api.password)
+                        await handle_add_ip_address_sync(api, data, websocket)
+                    except Exception as e:
+                        await websocket.send(json.dumps({
+                            'type': 'ip_address_action',
+                            'status': 'error',
+                            'message': str(e)
+                        }, ensure_ascii=False))
                 elif action == 'edit_ip_address':
-                    await handle_edit_ip_address(websocket, device_ip, mt_api.username, mt_api.password, data)
+                    try:
+                        api = get_ip_address_action_api(device_ip, mt_api.username, mt_api.password)
+                        await handle_edit_ip_address_sync(api, data, websocket)
+                    except Exception as e:
+                        await websocket.send(json.dumps({
+                            'type': 'ip_address_action',
+                            'status': 'error',
+                            'message': str(e)
+                        }, ensure_ascii=False))
                 elif action == 'delete_ip_address':
-                    await handle_delete_ip_address(websocket, device_ip, mt_api.username, mt_api.password, data)
+                    try:
+                        api = get_ip_address_action_api(device_ip, mt_api.username, mt_api.password)
+                        await handle_delete_ip_address_sync(api, data, websocket)
+                    except Exception as e:
+                        await websocket.send(json.dumps({
+                            'type': 'ip_address_action',
+                            'status': 'error',
+                            'message': str(e)
+                        }, ensure_ascii=False))
+                elif action == 'enable_ip_address':
+                    try:
+                        api = get_ip_address_action_api(device_ip, mt_api.username, mt_api.password)
+                        await handle_enable_ip_address_sync(api, data, websocket)
+                    except Exception as e:
+                        await websocket.send(json.dumps({
+                            'type': 'ip_address_action',
+                            'status': 'error',
+                            'message': str(e)
+                        }, ensure_ascii=False))
+                elif action == 'disable_ip_address':
+                    try:
+                        api = get_ip_address_action_api(device_ip, mt_api.username, mt_api.password)
+                        await handle_disable_ip_address_sync(api, data, websocket)
+                    except Exception as e:
+                        await websocket.send(json.dumps({
+                            'type': 'ip_address_action',
+                            'status': 'error',
+                            'message': str(e)
+                        }, ensure_ascii=False))
+                elif action == 'start_ip_addresses_polling':
+                    if polling_tasks is not None and stop_events is not None:
+                        await handle_start_ip_addresses_polling(websocket, device_ip, username, password, polling_tasks, stop_events)
+                elif action == 'start_bridge_polling':
+                    if polling_tasks is not None and stop_events is not None:
+                        await handle_start_bridge_polling(websocket, device_ip, username, password, polling_tasks, stop_events)
+                elif action == 'stop_bridge':
+                    if stop_events is not None and 'bridge' in stop_events:
+                        stop_events['bridge'].set()
+                    if polling_tasks is not None and 'bridge' in polling_tasks:
+                        polling_tasks['bridge'].cancel()
+                        try:
+                            await polling_tasks['bridge']
+                        except asyncio.CancelledError:
+                            pass
+                        polling_tasks.pop('bridge', None)
+                    if stop_events is not None:
+                        stop_events.pop('bridge', None)
+                elif action == 'stop_ip_addresses':
+                    if stop_events is not None and 'ip_addresses' in stop_events:
+                        stop_events['ip_addresses'].set()
+                    if polling_tasks is not None and 'ip_addresses' in polling_tasks:
+                        polling_tasks['ip_addresses'].cancel()
+                        try:
+                            await polling_tasks['ip_addresses']
+                        except asyncio.CancelledError:
+                            pass
+                        polling_tasks.pop('ip_addresses', None)
+                    if stop_events is not None:
+                        stop_events.pop('ip_addresses', None)
+                elif action == 'add_bridge':
+                    bridge_name = data.get('name', '')
+                    bridge_params = data.get('params', {})
+                    try:
+                        api = get_bridge_action_api(device_ip, username, password)
+                        success, message = api.add_bridge(bridge_name, **bridge_params)
+                        await websocket.send(json.dumps({
+                            'type': 'bridge_action',
+                            'status': 'success' if success else 'error',
+                            'message': message
+                        }, ensure_ascii=False))
+                    except Exception as e:
+                        await websocket.send(json.dumps({
+                            'type': 'bridge_action',
+                            'status': 'error',
+                            'message': str(e)
+                        }, ensure_ascii=False))
+                elif action == 'edit_bridge':
+                    bridge_id = data.get('bridge_id', '')
+                    bridge_params = data.get('params', {})
+                    try:
+                        api = get_bridge_action_api(device_ip, username, password)
+                        success, message = api.edit_bridge(bridge_id, **bridge_params)
+                        await websocket.send(json.dumps({
+                            'type': 'bridge_action',
+                            'status': 'success' if success else 'error',
+                            'message': message
+                        }, ensure_ascii=False))
+                    except Exception as e:
+                        await websocket.send(json.dumps({
+                            'type': 'bridge_action',
+                            'status': 'error',
+                            'message': str(e)
+                        }, ensure_ascii=False))
+                elif action == 'delete_bridge':
+                    bridge_id = data.get('bridge_id', '')
+                    try:
+                        api = get_bridge_action_api(device_ip, username, password)
+                        success, message = api.delete_bridge(bridge_id)
+                        await websocket.send(json.dumps({
+                            'type': 'bridge_action',
+                            'status': 'success' if success else 'error',
+                            'message': message
+                        }, ensure_ascii=False))
+                    except Exception as e:
+                        await websocket.send(json.dumps({
+                            'type': 'bridge_action',
+                            'status': 'error',
+                            'message': str(e)
+                        }, ensure_ascii=False))
+                elif action == 'add_bridge_port':
+                    port_interface = data.get('interface', '')
+                    port_bridge = data.get('bridge', '')
+                    port_params = data.get('params', {})
+                    try:
+                        api = get_bridge_action_api(device_ip, username, password)
+                        success, message = api.add_bridge_port(port_interface, port_bridge, **port_params)
+                        await websocket.send(json.dumps({
+                            'type': 'bridge_port_action',
+                            'status': 'success' if success else 'error',
+                            'message': message
+                        }, ensure_ascii=False))
+                    except Exception as e:
+                        await websocket.send(json.dumps({
+                            'type': 'bridge_port_action',
+                            'status': 'error',
+                            'message': str(e)
+                        }, ensure_ascii=False))
+                elif action == 'edit_bridge_port':
+                    port_id = data.get('port_id', '')
+                    port_params = data.get('params', {})
+                    try:
+                        api = get_bridge_action_api(device_ip, username, password)
+                        success, message = api.edit_bridge_port(port_id, **port_params)
+                        await websocket.send(json.dumps({
+                            'type': 'bridge_port_action',
+                            'status': 'success' if success else 'error',
+                            'message': message
+                        }, ensure_ascii=False))
+                    except Exception as e:
+                        await websocket.send(json.dumps({
+                            'type': 'bridge_port_action',
+                            'status': 'error',
+                            'message': str(e)
+                        }, ensure_ascii=False))
+                elif action == 'delete_bridge_port':
+                    port_id = data.get('port_id', '')
+                    try:
+                        api = get_bridge_action_api(device_ip, username, password)
+                        success, message = api.delete_bridge_port(port_id)
+                        await websocket.send(json.dumps({
+                            'type': 'bridge_port_action',
+                            'status': 'success' if success else 'error',
+                            'message': message
+                        }, ensure_ascii=False))
+                    except Exception as e:
+                        await websocket.send(json.dumps({
+                            'type': 'bridge_port_action',
+                            'status': 'error',
+                            'message': str(e)
+                        }, ensure_ascii=False))
+                elif action == 'start_wireless_polling':
+                    if polling_tasks is not None and stop_events is not None:
+                        await handle_start_wireless_polling(websocket, device_ip, username, password, polling_tasks, stop_events)
+                elif action == 'stop_wireless':
+                    for key in ['wireless', 'clients', 'security']:
+                        if stop_events is not None and key in stop_events:
+                            stop_events[key].set()
+                        if polling_tasks is not None and key in polling_tasks:
+                            polling_tasks[key].cancel()
+                            try:
+                                await polling_tasks[key]
+                            except asyncio.CancelledError:
+                                pass
+                            del polling_tasks[key]
+                        if stop_events is not None and key in stop_events:
+                            del stop_events[key]
+                elif action == 'start_logs_polling':
+                    device_mac = data.get('mac')
+                    if polling_tasks is not None and stop_events is not None:
+                        logs_task = asyncio.create_task(
+                            handle_logs_monitor(websocket, device_ip, username, password, device_mac, polling_tasks, stop_events)
+                        )
+                        polling_tasks['logs'] = logs_task
+                    else:
+                        await handle_logs_monitor(websocket, device_ip, username, password, device_mac)
+                elif action == 'stop_logs':
+                    if stop_events is not None and 'logs' in stop_events:
+                        stop_events['logs'].set()
+                elif action == 'get_file_list':
+                    print(f"[接口轮询] 收到文件列表请求")
+                    await handle_get_file_list(websocket, device_ip, username, password)
+                elif action == 'download_file':
+                    print(f"[接口轮询] 收到文件下载请求")
+                    file_name = data.get('file_name', '')
+                    await handle_download_file(websocket, device_ip, username, password, file_name)
+                elif action == 'delete_file':
+                    print(f"[接口轮询] 收到文件删除请求")
+                    file_name = data.get('file_name', '')
+                    await handle_delete_file(websocket, device_ip, username, password, file_name)
                 elif action == 'stop':
                     print(f"[接口轮询] 收到停止命令")
                     break
@@ -1514,12 +1845,13 @@ async def wireless_clients_polling_task_single_conn(
                                 'interface': client.get('interface', ''),
                                 'mac': client.get('mac-address', ''),
                                 'uptime': client.get('uptime', ''),
-                                'tx_signal': client.get('signal-strength', ''),
-                                'rx_signal': client.get('signal', ''),
+                                'tx_signal': client.get('tx-signal-strength', ''),
+                                'rx_signal': client.get('signal-strength', ''),
                                 'tx_signal_quality': client.get('tx-ccq', ''),
                                 'rx_signal_quality': client.get('rx-ccq', ''),
                                 'tx_rate': client.get('tx-rate', ''),
                                 'rx_rate': client.get('rx-rate', ''),
+                                'radio_name': client.get('radio-name', ''),
                             })
                 
                 if clients:
@@ -1546,6 +1878,494 @@ async def wireless_clients_polling_task_single_conn(
         
     except asyncio.CancelledError:
         pass
+
+
+async def handle_add_bridge(websocket: WebSocketConn, device_ip: str, username: str, password: str, bridge_name: str, params: dict) -> None:
+    """添加桥接口"""
+    try:
+        mt_api = get_bridge_action_api(device_ip, username, password)
+        success, message = mt_api.add_bridge(bridge_name, **params)
+        if success:
+            await websocket.send(json.dumps({
+                'type': 'bridge_action',
+                'status': 'success',
+                'message': message
+            }, ensure_ascii=False))
+        else:
+            await websocket.send(json.dumps({
+                'type': 'bridge_action',
+                'status': 'error',
+                'message': message
+            }, ensure_ascii=False))
+    except ConnectionError as e:
+        close_bridge_action_api(device_ip)
+        await websocket.send(json.dumps({
+            'type': 'bridge_action',
+            'status': 'error',
+            'message': str(e)
+        }, ensure_ascii=False))
+    except Exception as e:
+        print(f"添加桥接口错误: {e}")
+        close_bridge_action_api(device_ip)
+        await websocket.send(json.dumps({
+            'type': 'bridge_action',
+            'status': 'error',
+            'message': str(e)
+        }, ensure_ascii=False))
+
+
+async def handle_edit_bridge(websocket: WebSocketConn, device_ip: str, username: str, password: str, bridge_id: str, params: dict) -> None:
+    """编辑桥接口"""
+    try:
+        mt_api = get_bridge_action_api(device_ip, username, password)
+        success, message = mt_api.edit_bridge(bridge_id, **params)
+        if success:
+            await websocket.send(json.dumps({
+                'type': 'bridge_action',
+                'status': 'success',
+                'message': message
+            }, ensure_ascii=False))
+        else:
+            await websocket.send(json.dumps({
+                'type': 'bridge_action',
+                'status': 'error',
+                'message': message
+            }, ensure_ascii=False))
+    except ConnectionError as e:
+        close_bridge_action_api(device_ip)
+        await websocket.send(json.dumps({
+            'type': 'bridge_action',
+            'status': 'error',
+            'message': str(e)
+        }, ensure_ascii=False))
+    except Exception as e:
+        print(f"编辑桥接口错误: {e}")
+        close_bridge_action_api(device_ip)
+        await websocket.send(json.dumps({
+            'type': 'bridge_action',
+            'status': 'error',
+            'message': str(e)
+        }, ensure_ascii=False))
+
+
+async def handle_delete_bridge(websocket: WebSocketConn, device_ip: str, username: str, password: str, bridge_id: str) -> None:
+    """删除桥接口"""
+    try:
+        mt_api = get_bridge_action_api(device_ip, username, password)
+        success, message = mt_api.delete_bridge(bridge_id)
+        if success:
+            await websocket.send(json.dumps({
+                'type': 'bridge_action',
+                'status': 'success',
+                'message': message
+            }, ensure_ascii=False))
+        else:
+            await websocket.send(json.dumps({
+                'type': 'bridge_action',
+                'status': 'error',
+                'message': message
+            }, ensure_ascii=False))
+    except ConnectionError as e:
+        close_bridge_action_api(device_ip)
+        await websocket.send(json.dumps({
+            'type': 'bridge_action',
+            'status': 'error',
+            'message': str(e)
+        }, ensure_ascii=False))
+    except Exception as e:
+        print(f"删除桥接口错误: {e}")
+        close_bridge_action_api(device_ip)
+        await websocket.send(json.dumps({
+            'type': 'bridge_action',
+            'status': 'error',
+            'message': str(e)
+        }, ensure_ascii=False))
+
+
+async def handle_add_bridge_port(websocket: WebSocketConn, device_ip: str, username: str, password: str, interface: str, bridge: str, params: dict) -> None:
+    """添加桥接端口"""
+    try:
+        mt_api = get_bridge_action_api(device_ip, username, password)
+        success, message = mt_api.add_bridge_port(interface, bridge, **params)
+        if success:
+            await websocket.send(json.dumps({
+                'type': 'bridge_port_action',
+                'status': 'success',
+                'message': message
+            }, ensure_ascii=False))
+        else:
+            await websocket.send(json.dumps({
+                'type': 'bridge_port_action',
+                'status': 'error',
+                'message': message
+            }, ensure_ascii=False))
+    except ConnectionError as e:
+        close_bridge_action_api(device_ip)
+        await websocket.send(json.dumps({
+            'type': 'bridge_port_action',
+            'status': 'error',
+            'message': str(e)
+        }, ensure_ascii=False))
+    except Exception as e:
+        print(f"添加桥接端口错误: {e}")
+        close_bridge_action_api(device_ip)
+        await websocket.send(json.dumps({
+            'type': 'bridge_port_action',
+            'status': 'error',
+            'message': str(e)
+        }, ensure_ascii=False))
+
+
+async def handle_edit_bridge_port(websocket: WebSocketConn, device_ip: str, username: str, password: str, port_id: str, params: dict) -> None:
+    """编辑桥接端口"""
+    try:
+        mt_api = get_bridge_action_api(device_ip, username, password)
+        success, message = mt_api.edit_bridge_port(port_id, **params)
+        if success:
+            await websocket.send(json.dumps({
+                'type': 'bridge_port_action',
+                'status': 'success',
+                'message': message
+            }, ensure_ascii=False))
+        else:
+            await websocket.send(json.dumps({
+                'type': 'bridge_port_action',
+                'status': 'error',
+                'message': message
+            }, ensure_ascii=False))
+    except ConnectionError as e:
+        close_bridge_action_api(device_ip)
+        await websocket.send(json.dumps({
+            'type': 'bridge_port_action',
+            'status': 'error',
+            'message': str(e)
+        }, ensure_ascii=False))
+    except Exception as e:
+        print(f"编辑桥接端口错误: {e}")
+        close_bridge_action_api(device_ip)
+        await websocket.send(json.dumps({
+            'type': 'bridge_port_action',
+            'status': 'error',
+            'message': str(e)
+        }, ensure_ascii=False))
+
+
+async def handle_delete_bridge_port(websocket: WebSocketConn, device_ip: str, username: str, password: str, port_id: str) -> None:
+    """删除桥接端口"""
+    try:
+        mt_api = get_bridge_action_api(device_ip, username, password)
+        success, message = mt_api.delete_bridge_port(port_id)
+        if success:
+            await websocket.send(json.dumps({
+                'type': 'bridge_port_action',
+                'status': 'success',
+                'message': message
+            }, ensure_ascii=False))
+        else:
+            await websocket.send(json.dumps({
+                'type': 'bridge_port_action',
+                'status': 'error',
+                'message': message
+            }, ensure_ascii=False))
+    except ConnectionError as e:
+        close_bridge_action_api(device_ip)
+        await websocket.send(json.dumps({
+            'type': 'bridge_port_action',
+            'status': 'error',
+            'message': str(e)
+        }, ensure_ascii=False))
+    except Exception as e:
+        print(f"删除桥接端口错误: {e}")
+        close_bridge_action_api(device_ip)
+        await websocket.send(json.dumps({
+            'type': 'bridge_port_action',
+            'status': 'error',
+            'message': str(e)
+        }, ensure_ascii=False))
+
+
+async def handle_start_bridge_polling(
+    websocket: WebSocketConn,
+    device_ip: str,
+    username: str,
+    password: str,
+    polling_tasks: dict[str, asyncio.Task],
+    stop_events: dict[str, asyncio.Event]
+) -> None:
+    """启动桥接口轮询任务（单连接模型）- 只启动后台任务，不进入消息循环"""
+    if 'bridge' in polling_tasks:
+        print(f"[桥接口轮询] 已存在轮询任务，跳过")
+        return
+
+    print(f"[桥接口轮询] 启动设备 {device_ip} 的桥接口轮询任务")
+    bridge_stop = asyncio.Event()
+    stop_events['bridge'] = bridge_stop
+
+    mt_api_bridge: MikroTikAPI | None = None
+
+    try:
+        if not username:
+            await websocket.send(json.dumps({
+                'type': 'bridge_data',
+                'status': 'error',
+                'message': '认证失败：缺少用户名'
+            }, ensure_ascii=False))
+            return
+
+        mt_api_bridge = MikroTikAPI(device_ip, username, password, port=8728, use_ssl=False)
+        success, message = mt_api_bridge.login()
+
+        if not success:
+            await websocket.send(json.dumps({
+                'type': 'bridge_data',
+                'status': 'error',
+                'message': f'连接失败: {message}'
+            }, ensure_ascii=False))
+            mt_api_bridge.close()
+            mt_api_bridge = None
+            return
+
+        register_bridge_polling_api(device_ip, mt_api_bridge)
+
+        bridge_task = asyncio.create_task(
+            bridge_polling_task_single_conn(device_ip, websocket, mt_api_bridge, bridge_stop)
+        )
+        polling_tasks['bridge'] = bridge_task
+
+        def _bridge_task_done(t: asyncio.Task) -> None:
+            unregister_bridge_polling_api(device_ip)
+            if 'bridge' in polling_tasks and polling_tasks['bridge'] is t:
+                del polling_tasks['bridge']
+            if 'bridge' in stop_events:
+                del stop_events['bridge']
+            if mt_api_bridge:
+                try:
+                    mt_api_bridge.close()
+                except:
+                    pass
+
+        bridge_task.add_done_callback(_bridge_task_done)
+
+    except Exception as e:
+        print(f"桥接口轮询启动错误: {e}")
+        if mt_api_bridge:
+            try:
+                mt_api_bridge.close()
+            except:
+                pass
+
+
+async def handle_bridge_polling_single_conn(
+    websocket: WebSocketConn,
+    device_ip: str,
+    username: str,
+    password: str,
+    polling_tasks: dict[str, asyncio.Task],
+    stop_events: dict[str, asyncio.Event]
+) -> None:
+    """处理桥接口数据轮询（单连接模型）"""
+    mt_api: MikroTikAPI | None = None
+    stop_event = asyncio.Event()
+    stop_events['bridge'] = stop_event
+    
+    try:
+        if not username:
+            await websocket.send(json.dumps({
+                'type': 'bridge_data',
+                'status': 'error',
+                'message': '认证失败：缺少用户名，请先登录设备'
+            }, ensure_ascii=False))
+            return
+        
+        mt_api = MikroTikAPI(device_ip, username, password, port=8728, use_ssl=False)
+        success, message = mt_api.login()
+        
+        if not success:
+            await websocket.send(json.dumps({
+                'type': 'bridge_data',
+                'status': 'error',
+                'message': f'认证失败：{message}'
+            }, ensure_ascii=False))
+            return
+        
+        register_bridge_polling_api(device_ip, mt_api)
+        
+        polling_task = asyncio.create_task(
+            bridge_polling_task_single_conn(device_ip, websocket, mt_api, stop_event)
+        )
+        polling_tasks['bridge'] = polling_task
+        
+        try:
+            async for message in websocket:
+                try:
+                    data = json.loads(message)
+                    action = data.get('action')
+                    if action == 'stop' or action == 'stop_bridge':
+                        stop_event.set()
+                        break
+                except:
+                    pass
+        except websockets.exceptions.ConnectionClosed:
+            pass
+        
+    except Exception as e:
+        print(f"桥接口长连接错误: {e}")
+    finally:
+        unregister_bridge_polling_api(device_ip)
+        stop_event.set()
+        if 'bridge' in polling_tasks:
+            polling_tasks['bridge'].cancel()
+            try:
+                await polling_tasks['bridge']
+            except asyncio.CancelledError:
+                pass
+            del polling_tasks['bridge']
+        if mt_api:
+            try:
+                mt_api.close()
+            except:
+                pass
+
+
+async def bridge_polling_task_single_conn(
+    device_ip: str,
+    websocket: WebSocketConn,
+    mt_api: MikroTikAPI,
+    stop_event: asyncio.Event
+) -> None:
+    """桥接口轮询任务（与Wireless相同的模式）"""
+    import time
+    consecutive_errors = 0
+    BRIDGE_POLL_INTERVAL = WIRELESS_INTERVAL
+    last_sent_bridges = None
+    last_sent_ports = None
+    last_sent_hosts = None
+    
+    async def _get_bridge_data(api: MikroTikAPI) -> tuple:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: (api.get_bridges(), api.get_bridge_ports(), api.get_bridge_hosts()))
+    
+    try:
+        while not stop_event.is_set():
+            try:
+                loop_start = time.monotonic()
+                
+                bridges, ports, hosts = await _get_bridge_data(mt_api)
+                
+                if bridges is None and ports is None and hosts is None:
+                    consecutive_errors += 1
+                    retry_delay = min(1.0 * (2 ** (consecutive_errors - 1)), 30)
+                    print(f"桥接口读取全部返回None ({consecutive_errors}/3)，{retry_delay}s 后重连...")
+                    
+                    if not mt_api.logged_in:
+                        await websocket.send(json.dumps({
+                            'type': 'bridge_data',
+                            'status': 'device_offline',
+                            'message': '设备连接已断开'
+                        }, ensure_ascii=False))
+                        break
+                    
+                    if consecutive_errors >= 3:
+                        mt_api.close()
+                        mt_api = MikroTikAPI(device_ip, mt_api.username, mt_api.password, port=8728, use_ssl=False)
+                        success, message = mt_api.login()
+                        if not success:
+                            print(f"桥接口重连失败: {message}")
+                            await websocket.send(json.dumps({
+                                'type': 'bridge_data',
+                                'status': 'error',
+                                'message': f'重连失败: {message}'
+                            }, ensure_ascii=False))
+                            break
+                        print(f"桥接口重连成功: {device_ip}")
+                        register_bridge_polling_api(device_ip, mt_api)
+                        consecutive_errors = 0
+                        last_sent_bridges = None
+                        last_sent_ports = None
+                        last_sent_hosts = None
+                    else:
+                        await asyncio.sleep(retry_delay)
+                        continue
+                else:
+                    consecutive_errors = 0
+                    data_changed = False
+                    
+                    if bridges is not None:
+                        bridges_json = json.dumps(bridges, sort_keys=True, ensure_ascii=False)
+                        if bridges_json != last_sent_bridges:
+                            last_sent_bridges = bridges_json
+                            data_changed = True
+                    
+                    if ports is not None:
+                        ports_json = json.dumps(ports, sort_keys=True, ensure_ascii=False)
+                        if ports_json != last_sent_ports:
+                            last_sent_ports = ports_json
+                            data_changed = True
+                    
+                    if hosts is not None:
+                        hosts_json = json.dumps(hosts, sort_keys=True, ensure_ascii=False)
+                        if hosts_json != last_sent_hosts:
+                            last_sent_hosts = hosts_json
+                            data_changed = True
+                    
+                    if data_changed or last_sent_bridges is None:
+                        await websocket.send(json.dumps({
+                            'type': 'bridge_data',
+                            'status': 'success',
+                            'bridges': bridges if bridges is not None else [],
+                            'bridge_ports': ports if ports is not None else [],
+                            'hosts': hosts if hosts is not None else []
+                        }, ensure_ascii=False))
+                
+                elapsed = time.monotonic() - loop_start
+                wait_time = max(0.2, BRIDGE_POLL_INTERVAL - elapsed)
+                
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=wait_time)
+                    break
+                except asyncio.TimeoutError:
+                    pass
+                    
+            except websockets.exceptions.ConnectionClosed:
+                print(f"桥接口WebSocket连接已关闭: {device_ip}")
+                break
+            except Exception as e:
+                consecutive_errors += 1
+                print(f"桥接口轮询错误: {e}")
+                
+                if not mt_api.logged_in:
+                    try:
+                        await websocket.send(json.dumps({
+                            'type': 'bridge_data',
+                            'status': 'device_offline',
+                            'message': '设备连接已断开'
+                        }, ensure_ascii=False))
+                    except:
+                        pass
+                    break
+                
+                if consecutive_errors >= 3:
+                    mt_api.close()
+                    mt_api = MikroTikAPI(device_ip, mt_api.username, mt_api.password, port=8728, use_ssl=False)
+                    success, message = mt_api.login()
+                    if not success:
+                        print(f"桥接口重连失败: {message}")
+                        break
+                    print(f"桥接口重连成功: {device_ip}")
+                    register_bridge_polling_api(device_ip, mt_api)
+                    consecutive_errors = 0
+                    last_sent_bridges = None
+                    last_sent_ports = None
+                    last_sent_hosts = None
+                
+                await asyncio.sleep(BRIDGE_POLL_INTERVAL)
+    
+    except asyncio.CancelledError:
+        print(f"桥接口轮询任务已取消: {device_ip}")
+    except Exception as e:
+        print(f"桥接口轮询任务异常: {e}")
+    finally:
+        print(f"[桥接口轮询] 任务结束: {device_ip}")
 
 
 async def handle_security_profiles_single_conn(
@@ -1669,7 +2489,7 @@ async def security_profiles_polling_task_single_conn(
         pass
 
 
-async def handle_ip_addresses_single_conn(
+async def handle_start_ip_addresses_polling(
     websocket: WebSocketConn,
     device_ip: str,
     username: str,
@@ -1677,121 +2497,153 @@ async def handle_ip_addresses_single_conn(
     polling_tasks: dict[str, asyncio.Task],
     stop_events: dict[str, asyncio.Event]
 ) -> None:
-    """处理 IP 地址监控（单连接模型）"""
-    mt_api: MikroTikAPI | None = None
-    stop_event = asyncio.Event()
-    stop_events['ip_addresses'] = stop_event
-    
+    """启动IP地址轮询任务（与Wireless相同的模式）"""
+    if 'ip_addresses' in polling_tasks and not polling_tasks['ip_addresses'].done():
+        print(f"[IP地址轮询] 已存在轮询任务，跳过")
+        return
+
+    print(f"[IP地址轮询] 启动设备 {device_ip} 的IP地址轮询任务")
+    ip_stop = asyncio.Event()
+    stop_events['ip_addresses'] = ip_stop
+
+    mt_api_ip: MikroTikAPI | None = None
+
     try:
         if not username:
+            await websocket.send(json.dumps({
+                'type': 'ip_addresses',
+                'status': 'error',
+                'message': '认证失败：缺少用户名'
+            }, ensure_ascii=False))
             return
-        
-        mt_api = MikroTikAPI(device_ip, username, password, port=8728, use_ssl=False)
-        success, message = mt_api.login()
-        
+
+        mt_api_ip = MikroTikAPI(device_ip, username, password, port=8728, use_ssl=False)
+        success, message = mt_api_ip.login()
+
         if not success:
+            await websocket.send(json.dumps({
+                'type': 'ip_addresses',
+                'status': 'error',
+                'message': f'连接失败: {message}'
+            }, ensure_ascii=False))
+            mt_api_ip.close()
+            mt_api_ip = None
             return
-        
-        polling_task = asyncio.create_task(
-            ip_addresses_polling_task_single_conn(device_ip, websocket, mt_api, stop_event)
+
+        register_ip_addresses_polling_api(device_ip, mt_api_ip)
+
+        ip_task = asyncio.create_task(
+            ip_addresses_polling_task(device_ip, websocket, mt_api_ip, ip_stop)
         )
-        polling_tasks['ip_addresses'] = polling_task
-        
-        try:
-            async for message in websocket:
+        polling_tasks['ip_addresses'] = ip_task
+
+        def _ip_task_done(t: asyncio.Task) -> None:
+            unregister_ip_addresses_polling_api(device_ip)
+            if 'ip_addresses' in polling_tasks and polling_tasks['ip_addresses'] is t:
+                del polling_tasks['ip_addresses']
+            if 'ip_addresses' in stop_events:
+                del stop_events['ip_addresses']
+            if mt_api_ip:
                 try:
-                    data = json.loads(message)
-                    action = data.get('action')
-                    if action == 'stop':
-                        stop_event.set()
-                        break
-                    elif action == 'add_ip_address':
-                        await handle_add_ip_address_sync(mt_api, data, websocket)
-                    elif action == 'edit_ip_address':
-                        await handle_edit_ip_address_sync(mt_api, data, websocket)
-                    elif action == 'delete_ip_address':
-                        await handle_delete_ip_address_sync(mt_api, data, websocket)
-                    elif action == 'enable_ip_address':
-                        await handle_enable_ip_address_sync(mt_api, data, websocket)
-                    elif action == 'disable_ip_address':
-                        await handle_disable_ip_address_sync(mt_api, data, websocket)
+                    mt_api_ip.close()
                 except:
                     pass
-        except websockets.exceptions.ConnectionClosed:
-            pass
-        
+
+        ip_task.add_done_callback(_ip_task_done)
+
     except Exception as e:
-        print(f"IP 地址长连接错误: {e}")
-    finally:
-        stop_event.set()
-        if 'ip_addresses' in polling_tasks:
-            polling_tasks['ip_addresses'].cancel()
+        print(f"IP地址轮询启动错误: {e}")
+        if mt_api_ip:
             try:
-                await polling_tasks['ip_addresses']
-            except asyncio.CancelledError:
-                pass
-            del polling_tasks['ip_addresses']
-        if mt_api:
-            try:
-                mt_api.close()
+                mt_api_ip.close()
             except:
                 pass
 
 
-async def ip_addresses_polling_task_single_conn(
+async def ip_addresses_polling_task(
     device_ip: str,
     websocket: WebSocketConn,
     mt_api: MikroTikAPI,
     stop_event: asyncio.Event
 ) -> None:
-    """IP 地址轮询任务（单连接模型）"""
+    """IP地址轮询任务（与Wireless相同的模式）"""
+    import time
+    POLL_INTERVAL = IP_ADDRESS_INTERVAL
+    READ_TIMEOUT = 3
     consecutive_errors = 0
+    last_sent_addresses = None
+    
+    async def _get_ip_addresses(api: MikroTikAPI) -> tuple[list[dict[str, str]] | None, str | None]:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: get_ip_addresses_sync(api, READ_TIMEOUT))
     
     try:
         while not stop_event.is_set():
             try:
-                mt_api.write_sentence(['/ip/address/print'])
-                addresses = []
+                loop_start = time.monotonic()
                 
-                while True:
-                    response = mt_api.read_sentence(timeout=3)
-                    if '!done' in response:
-                        break
-                    if '!re' in response:
-                        addr = {}
-                        for line in response:
-                            if line.startswith('='):
-                                parts = line[1:].split('=', 1)
-                                if len(parts) == 2:
-                                    key, value = parts
-                                    addr[key] = value
-                        if addr:
-                            addresses.append(addr)
+                addresses, error = await _get_ip_addresses(mt_api)
                 
-                if addresses:
-                    await websocket.send(json.dumps({
-                        'type': 'ip_addresses',
-                        'status': 'success',
-                        'addresses': addresses
-                    }, ensure_ascii=False))
+                if error:
+                    consecutive_errors += 1
+                    retry_delay = min(1.0 * (2 ** (consecutive_errors - 1)), 30)
+                    print(f"IP地址读取错误 ({consecutive_errors}/3): {error}，{retry_delay}s 后重连...")
+                    
+                    if consecutive_errors >= 3:
+                        mt_api.close()
+                        mt_api = MikroTikAPI(device_ip, mt_api.username, mt_api.password, port=8728, use_ssl=False)
+                        success, message = mt_api.login()
+                        if not success:
+                            print(f"IP地址重连失败: {message}")
+                            await websocket.send(json.dumps({
+                                'type': 'ip_addresses',
+                                'status': 'error',
+                                'message': f'重连失败: {message}'
+                            }, ensure_ascii=False))
+                            break
+                        print(f"IP地址重连成功: {device_ip}")
+                        register_ip_addresses_polling_api(device_ip, mt_api)
+                        consecutive_errors = 0
+                        last_sent_addresses = None
+                    else:
+                        await asyncio.sleep(retry_delay)
+                    continue
+                else:
+                    consecutive_errors = 0
                 
-                consecutive_errors = 0
+                if addresses is not None:
+                    addresses_json = json.dumps(addresses, sort_keys=True, ensure_ascii=False)
+                    if last_sent_addresses != addresses_json:
+                        last_sent_addresses = addresses_json
+                        await websocket.send(json.dumps({
+                            'type': 'ip_addresses',
+                            'status': 'success',
+                            'addresses': addresses
+                        }, ensure_ascii=False))
+                
+                elapsed = time.monotonic() - loop_start
+                wait_time = max(0.2, POLL_INTERVAL - elapsed)
+                
                 try:
-                    await asyncio.wait_for(stop_event.wait(), timeout=IP_ADDRESS_INTERVAL)
+                    await asyncio.wait_for(stop_event.wait(), timeout=wait_time)
                     break
                 except asyncio.TimeoutError:
                     pass
                     
             except websockets.exceptions.ConnectionClosed:
+                print(f"IP地址WebSocket连接已关闭: {device_ip}")
                 break
             except Exception as e:
+                print(f"IP地址轮询错误: {e}")
                 consecutive_errors += 1
-                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                if consecutive_errors >= 3:
                     break
-                await asyncio.sleep(IP_ADDRESS_INTERVAL)
+                await asyncio.sleep(POLL_INTERVAL)
         
     except asyncio.CancelledError:
-        pass
+        print(f"IP地址轮询任务已取消: {device_ip}")
+    except Exception as e:
+        print(f"IP地址轮询任务异常: {e}")
 
 
 async def handle_interface_polling(websocket: WebSocketConn, device_ip: str, username: str, password: str) -> None:
@@ -2677,7 +3529,8 @@ async def handle_wireless_clients_monitor(websocket: WebSocketConn, device_ip: s
                             'tx_signal_quality': client.get('tx-ccq', ''),
                             'rx_signal_quality': '',
                             'tx_rate': client.get('tx-rate', ''),
-                            'rx_rate': client.get('rx-rate', '')
+                            'rx_rate': client.get('rx-rate', ''),
+                            'radio_name': client.get('radio-name', '')
                         })
             
             return clients, None
@@ -4117,6 +4970,7 @@ async def handle_websocket(websocket: WebSocketConn) -> None:
         is_security_profiles = data.get('is_security_profiles', False)
         is_ip_addresses = data.get('is_ip_addresses', False)
         is_logs = data.get('is_logs', False)
+        is_bridge_polling = data.get('is_bridge_polling', False)
         start_wireless_polling_flag = data.get('start_wireless_polling', False)
 
         if is_interface_polling:
@@ -4140,8 +4994,12 @@ async def handle_websocket(websocket: WebSocketConn) -> None:
             await handle_security_profiles_single_conn(websocket, device_ip, username, password, polling_tasks, stop_events)
             return
         
+        if is_bridge_polling:
+            await handle_bridge_polling_single_conn(websocket, device_ip, username, password, polling_tasks, stop_events)
+            return
+        
         if is_ip_addresses:
-            await handle_ip_addresses_single_conn(websocket, device_ip, username, password, polling_tasks, stop_events)
+            await handle_start_ip_addresses_polling(websocket, device_ip, username, password, polling_tasks, stop_events)
             return
         
         if is_logs:
@@ -4151,10 +5009,29 @@ async def handle_websocket(websocket: WebSocketConn) -> None:
         action = data.get('action')
         if action == 'start_interface_polling':
             await handle_interface_polling_single_conn(websocket, device_ip, username, password, polling_tasks, stop_events)
-            await websocket.send(json.dumps({'status': 'connected', 'message': '已连接'}))
+            if 'interface' in polling_tasks:
+                try:
+                    await polling_tasks['interface']
+                except asyncio.CancelledError:
+                    pass
+            return
         elif action == 'start_wireless_polling':
             await handle_start_wireless_polling(websocket, device_ip, username, password, polling_tasks, stop_events)
-            await websocket.send(json.dumps({'status': 'connected', 'message': '已连接'}))
+            wireless_task_names = [k for k in polling_tasks if 'wireless' in k or 'client' in k or 'security' in k]
+            if wireless_task_names:
+                try:
+                    await asyncio.gather(*[polling_tasks[k] for k in wireless_task_names if k in polling_tasks], return_exceptions=True)
+                except asyncio.CancelledError:
+                    pass
+            return
+        elif action == 'start_ip_addresses_polling':
+            await handle_start_ip_addresses_polling(websocket, device_ip, username, password, polling_tasks, stop_events)
+            if 'ip_addresses' in polling_tasks:
+                try:
+                    await polling_tasks['ip_addresses']
+                except asyncio.CancelledError:
+                    pass
+            return
         elif action == 'get_wireless_interfaces_list':
             await handle_get_wireless_interfaces_list(websocket, device_ip, username, password)
             return
@@ -4179,24 +5056,191 @@ async def handle_websocket(websocket: WebSocketConn) -> None:
             await handle_get_interfaces_list(websocket, device_ip, username, password)
             return
         elif action == 'add_ip_address':
-            await handle_add_ip_address(websocket, device_ip, username, password, data)
+            try:
+                api = get_ip_address_action_api(device_ip, username, password)
+                await handle_add_ip_address_sync(api, data, websocket)
+            except Exception as e:
+                await websocket.send(json.dumps({
+                    'type': 'ip_address_action',
+                    'status': 'error',
+                    'message': str(e)
+                }, ensure_ascii=False))
             return
         elif action == 'edit_ip_address':
-            await handle_edit_ip_address(websocket, device_ip, username, password, data)
+            try:
+                api = get_ip_address_action_api(device_ip, username, password)
+                await handle_edit_ip_address_sync(api, data, websocket)
+            except Exception as e:
+                await websocket.send(json.dumps({
+                    'type': 'ip_address_action',
+                    'status': 'error',
+                    'message': str(e)
+                }, ensure_ascii=False))
             return
         elif action == 'delete_ip_address':
-            await handle_delete_ip_address(websocket, device_ip, username, password, data)
+            try:
+                api = get_ip_address_action_api(device_ip, username, password)
+                await handle_delete_ip_address_sync(api, data, websocket)
+            except Exception as e:
+                await websocket.send(json.dumps({
+                    'type': 'ip_address_action',
+                    'status': 'error',
+                    'message': str(e)
+                }, ensure_ascii=False))
             return
         elif action == 'enable_ip_address':
-            await handle_enable_ip_address(websocket, device_ip, username, password, data)
+            try:
+                api = get_ip_address_action_api(device_ip, username, password)
+                await handle_enable_ip_address_sync(api, data, websocket)
+            except Exception as e:
+                await websocket.send(json.dumps({
+                    'type': 'ip_address_action',
+                    'status': 'error',
+                    'message': str(e)
+                }, ensure_ascii=False))
             return
         elif action == 'disable_ip_address':
-            await handle_disable_ip_address(websocket, device_ip, username, password, data)
+            try:
+                api = get_ip_address_action_api(device_ip, username, password)
+                await handle_disable_ip_address_sync(api, data, websocket)
+            except Exception as e:
+                await websocket.send(json.dumps({
+                    'type': 'ip_address_action',
+                    'status': 'error',
+                    'message': str(e)
+                }, ensure_ascii=False))
+            return
+        elif action == 'add_bridge':
+            bridge_name = data.get('name', '')
+            bridge_params = data.get('params', {})
+            print(f"[桥接口] 添加请求: IP={device_ip}, 名称='{bridge_name}'")
+            try:
+                api = get_bridge_action_api(device_ip, username, password)
+                success, message = api.add_bridge(bridge_name, **bridge_params)
+                await websocket.send(json.dumps({
+                    'type': 'bridge_action',
+                    'status': 'success' if success else 'error',
+                    'message': message
+                }, ensure_ascii=False))
+            except Exception as e:
+                await websocket.send(json.dumps({
+                    'type': 'bridge_action',
+                    'status': 'error',
+                    'message': str(e)
+                }, ensure_ascii=False))
+            return
+        elif action == 'edit_bridge':
+            bridge_id = data.get('bridge_id', '')
+            bridge_params = data.get('params', {})
+            print(f"[桥接口] 编辑请求: IP={device_ip}, ID='{bridge_id}'")
+            try:
+                api = get_bridge_action_api(device_ip, username, password)
+                success, message = api.edit_bridge(bridge_id, **bridge_params)
+                await websocket.send(json.dumps({
+                    'type': 'bridge_action',
+                    'status': 'success' if success else 'error',
+                    'message': message
+                }, ensure_ascii=False))
+            except Exception as e:
+                await websocket.send(json.dumps({
+                    'type': 'bridge_action',
+                    'status': 'error',
+                    'message': str(e)
+                }, ensure_ascii=False))
+            return
+        elif action == 'delete_bridge':
+            bridge_id = data.get('bridge_id', '')
+            print(f"[桥接口] 删除请求: IP={device_ip}, ID='{bridge_id}'")
+            try:
+                api = get_bridge_action_api(device_ip, username, password)
+                success, message = api.delete_bridge(bridge_id)
+                await websocket.send(json.dumps({
+                    'type': 'bridge_action',
+                    'status': 'success' if success else 'error',
+                    'message': message
+                }, ensure_ascii=False))
+            except Exception as e:
+                await websocket.send(json.dumps({
+                    'type': 'bridge_action',
+                    'status': 'error',
+                    'message': str(e)
+                }, ensure_ascii=False))
+            return
+        elif action == 'add_bridge_port':
+            port_interface = data.get('interface', '')
+            port_bridge = data.get('bridge', '')
+            port_params = data.get('params', {})
+            print(f"[桥接端口] 添加请求: IP={device_ip}, 接口='{port_interface}', 桥='{port_bridge}'")
+            try:
+                api = get_bridge_action_api(device_ip, username, password)
+                success, message = api.add_bridge_port(port_interface, port_bridge, **port_params)
+                await websocket.send(json.dumps({
+                    'type': 'bridge_port_action',
+                    'status': 'success' if success else 'error',
+                    'message': message
+                }, ensure_ascii=False))
+            except Exception as e:
+                await websocket.send(json.dumps({
+                    'type': 'bridge_port_action',
+                    'status': 'error',
+                    'message': str(e)
+                }, ensure_ascii=False))
+            return
+        elif action == 'edit_bridge_port':
+            port_id = data.get('port_id', '')
+            port_params = data.get('params', {})
+            print(f"[桥接端口] 编辑请求: IP={device_ip}, ID='{port_id}'")
+            try:
+                api = get_bridge_action_api(device_ip, username, password)
+                success, message = api.edit_bridge_port(port_id, **port_params)
+                await websocket.send(json.dumps({
+                    'type': 'bridge_port_action',
+                    'status': 'success' if success else 'error',
+                    'message': message
+                }, ensure_ascii=False))
+            except Exception as e:
+                await websocket.send(json.dumps({
+                    'type': 'bridge_port_action',
+                    'status': 'error',
+                    'message': str(e)
+                }, ensure_ascii=False))
+            return
+        elif action == 'delete_bridge_port':
+            port_id = data.get('port_id', '')
+            print(f"[桥接端口] 删除请求: IP={device_ip}, ID='{port_id}'")
+            try:
+                api = get_bridge_action_api(device_ip, username, password)
+                success, message = api.delete_bridge_port(port_id)
+                await websocket.send(json.dumps({
+                    'type': 'bridge_port_action',
+                    'status': 'success' if success else 'error',
+                    'message': message
+                }, ensure_ascii=False))
+            except Exception as e:
+                await websocket.send(json.dumps({
+                    'type': 'bridge_port_action',
+                    'status': 'error',
+                    'message': str(e)
+                }, ensure_ascii=False))
             return
         elif action == 'set_device_name':
             new_name = data.get('name', '')
             print(f"[设备名称] 修改请求: IP={device_ip}, 新名称='{new_name}'")
             await handle_set_device_name(websocket, device_ip, username, password, new_name)
+            return
+        elif action == 'get_file_list':
+            print(f"[文件管理] 获取文件列表请求: IP={device_ip}")
+            await handle_get_file_list(websocket, device_ip, username, password)
+            return
+        elif action == 'download_file':
+            file_name = data.get('file_name', '')
+            print(f"[文件管理] 下载文件请求: IP={device_ip}, 文件={file_name}")
+            await handle_download_file(websocket, device_ip, username, password, file_name)
+            return
+        elif action == 'delete_file':
+            file_name = data.get('file_name', '')
+            print(f"[文件管理] 删除文件请求: IP={device_ip}, 文件={file_name}")
+            await handle_delete_file(websocket, device_ip, username, password, file_name)
             return
         elif action == 'terminal_connect':
             await handle_terminal_session(websocket, device_ip, username, password)
@@ -4219,21 +5263,7 @@ async def handle_websocket(websocket: WebSocketConn) -> None:
                     if is_ip_addresses:
                         print(f"[单连接] 收到 IP 地址监控请求")
                         if 'ip_addresses' not in polling_tasks or polling_tasks['ip_addresses'].done():
-                            ip_stop = asyncio.Event()
-                            stop_events['ip_addresses'] = ip_stop
-                            mt_api_ip = MikroTikAPI(device_ip, username, password, port=8728, use_ssl=False)
-                            success, msg2 = mt_api_ip.login()
-                            if success:
-                                ip_task = asyncio.create_task(
-                                    ip_addresses_polling_task_single_conn(device_ip, websocket, mt_api_ip, ip_stop)
-                                )
-                                polling_tasks['ip_addresses'] = ip_task
-                            else:
-                                await websocket.send(json.dumps({
-                                    'type': 'ip_addresses',
-                                    'status': 'error',
-                                    'message': f'连接失败: {msg2}'
-                                }, ensure_ascii=False))
+                            await handle_start_ip_addresses_polling(websocket, device_ip, username, password, polling_tasks, stop_events)
                         continue
 
                     if action == 'stop':
@@ -4247,6 +5277,14 @@ async def handle_websocket(websocket: WebSocketConn) -> None:
                             if 'wireless' in task_name or 'client' in task_name or 'security' in task_name:
                                 if task_name in stop_events:
                                     stop_events[task_name].set()
+                    elif action == 'stop_ip_addresses':
+                        print(f"[单连接] 收到 stop_ip_addresses 命令")
+                        if 'ip_addresses' in stop_events:
+                            stop_events['ip_addresses'].set()
+                    elif action == 'stop_bridge':
+                        print(f"[单连接] 收到 stop_bridge 命令")
+                        if 'bridge' in stop_events:
+                            stop_events['bridge'].set()
                     elif action == 'start_interface_polling':
                         print(f"[单连接] 收到 start_interface_polling 命令")
                         if 'interface' not in polling_tasks or polling_tasks['interface'].done():
@@ -4255,6 +5293,14 @@ async def handle_websocket(websocket: WebSocketConn) -> None:
                         print(f"[单连接] 收到 start_wireless_polling 命令")
                         if 'wireless' not in polling_tasks or polling_tasks['wireless'].done():
                             await handle_start_wireless_polling(websocket, device_ip, username, password, polling_tasks, stop_events)
+                    elif action == 'start_ip_addresses_polling':
+                        print(f"[单连接] 收到 start_ip_addresses_polling 命令")
+                        if 'ip_addresses' not in polling_tasks or polling_tasks['ip_addresses'].done():
+                            await handle_start_ip_addresses_polling(websocket, device_ip, username, password, polling_tasks, stop_events)
+                    elif action == 'start_bridge_polling':
+                        print(f"[单连接] 收到 start_bridge_polling 命令")
+                        if 'bridge' not in polling_tasks or polling_tasks['bridge'].done():
+                            await handle_start_bridge_polling(websocket, device_ip, username, password, polling_tasks, stop_events)
                     elif action == 'start_logs_polling':
                         print(f"[单连接] 收到 start_logs_polling 命令")
                         if 'logs' not in polling_tasks or polling_tasks['logs'].done():
@@ -4312,19 +5358,177 @@ async def handle_websocket(websocket: WebSocketConn) -> None:
                         pass
                     elif action == 'add_ip_address':
                         print(f"[单连接] 收到 add_ip_address 命令")
-                        await handle_add_ip_address(websocket, device_ip, username, password, data)
+                        try:
+                            api = get_ip_address_action_api(device_ip, username, password)
+                            await handle_add_ip_address_sync(api, data, websocket)
+                        except Exception as e:
+                            await websocket.send(json.dumps({
+                                'type': 'ip_address_action',
+                                'status': 'error',
+                                'message': str(e)
+                            }, ensure_ascii=False))
                     elif action == 'edit_ip_address':
                         print(f"[单连接] 收到 edit_ip_address 命令")
-                        await handle_edit_ip_address(websocket, device_ip, username, password, data)
+                        try:
+                            api = get_ip_address_action_api(device_ip, username, password)
+                            await handle_edit_ip_address_sync(api, data, websocket)
+                        except Exception as e:
+                            await websocket.send(json.dumps({
+                                'type': 'ip_address_action',
+                                'status': 'error',
+                                'message': str(e)
+                            }, ensure_ascii=False))
                     elif action == 'delete_ip_address':
                         print(f"[单连接] 收到 delete_ip_address 命令")
-                        await handle_delete_ip_address(websocket, device_ip, username, password, data)
+                        try:
+                            api = get_ip_address_action_api(device_ip, username, password)
+                            await handle_delete_ip_address_sync(api, data, websocket)
+                        except Exception as e:
+                            await websocket.send(json.dumps({
+                                'type': 'ip_address_action',
+                                'status': 'error',
+                                'message': str(e)
+                            }, ensure_ascii=False))
                     elif action == 'enable_ip_address':
                         print(f"[单连接] 收到 enable_ip_address 命令")
-                        await handle_enable_ip_address(websocket, device_ip, username, password, data)
+                        try:
+                            api = get_ip_address_action_api(device_ip, username, password)
+                            await handle_enable_ip_address_sync(api, data, websocket)
+                        except Exception as e:
+                            await websocket.send(json.dumps({
+                                'type': 'ip_address_action',
+                                'status': 'error',
+                                'message': str(e)
+                            }, ensure_ascii=False))
                     elif action == 'disable_ip_address':
                         print(f"[单连接] 收到 disable_ip_address 命令")
-                        await handle_disable_ip_address(websocket, device_ip, username, password, data)
+                        try:
+                            api = get_ip_address_action_api(device_ip, username, password)
+                            await handle_disable_ip_address_sync(api, data, websocket)
+                        except Exception as e:
+                            await websocket.send(json.dumps({
+                                'type': 'ip_address_action',
+                                'status': 'error',
+                                'message': str(e)
+                            }, ensure_ascii=False))
+                    elif action == 'add_bridge':
+                        print(f"[单连接] 收到 add_bridge 命令")
+                        try:
+                            api = get_bridge_action_api(device_ip, username, password)
+                            bridge_name = data.get('name', '')
+                            bridge_params = data.get('params', {})
+                            success, message = api.add_bridge(bridge_name, **bridge_params)
+                            await websocket.send(json.dumps({
+                                'type': 'bridge_action',
+                                'status': 'success' if success else 'error',
+                                'message': message
+                            }, ensure_ascii=False))
+                        except Exception as e:
+                            await websocket.send(json.dumps({
+                                'type': 'bridge_action',
+                                'status': 'error',
+                                'message': str(e)
+                            }, ensure_ascii=False))
+                    elif action == 'edit_bridge':
+                        print(f"[单连接] 收到 edit_bridge 命令")
+                        try:
+                            api = get_bridge_action_api(device_ip, username, password)
+                            bridge_id = data.get('bridge_id', '')
+                            bridge_params = data.get('params', {})
+                            success, message = api.edit_bridge(bridge_id, **bridge_params)
+                            await websocket.send(json.dumps({
+                                'type': 'bridge_action',
+                                'status': 'success' if success else 'error',
+                                'message': message
+                            }, ensure_ascii=False))
+                        except Exception as e:
+                            await websocket.send(json.dumps({
+                                'type': 'bridge_action',
+                                'status': 'error',
+                                'message': str(e)
+                            }, ensure_ascii=False))
+                    elif action == 'delete_bridge':
+                        print(f"[单连接] 收到 delete_bridge 命令")
+                        try:
+                            api = get_bridge_action_api(device_ip, username, password)
+                            bridge_id = data.get('bridge_id', '')
+                            success, message = api.delete_bridge(bridge_id)
+                            await websocket.send(json.dumps({
+                                'type': 'bridge_action',
+                                'status': 'success' if success else 'error',
+                                'message': message
+                            }, ensure_ascii=False))
+                        except Exception as e:
+                            await websocket.send(json.dumps({
+                                'type': 'bridge_action',
+                                'status': 'error',
+                                'message': str(e)
+                            }, ensure_ascii=False))
+                    elif action == 'add_bridge_port':
+                        print(f"[单连接] 收到 add_bridge_port 命令")
+                        try:
+                            api = get_bridge_action_api(device_ip, username, password)
+                            port_interface = data.get('interface', '')
+                            port_bridge = data.get('bridge', '')
+                            port_params = data.get('params', {})
+                            success, message = api.add_bridge_port(port_interface, port_bridge, **port_params)
+                            await websocket.send(json.dumps({
+                                'type': 'bridge_port_action',
+                                'status': 'success' if success else 'error',
+                                'message': message
+                            }, ensure_ascii=False))
+                        except Exception as e:
+                            await websocket.send(json.dumps({
+                                'type': 'bridge_port_action',
+                                'status': 'error',
+                                'message': str(e)
+                            }, ensure_ascii=False))
+                    elif action == 'edit_bridge_port':
+                        print(f"[单连接] 收到 edit_bridge_port 命令")
+                        try:
+                            api = get_bridge_action_api(device_ip, username, password)
+                            port_id = data.get('port_id', '')
+                            port_params = data.get('params', {})
+                            success, message = api.edit_bridge_port(port_id, **port_params)
+                            await websocket.send(json.dumps({
+                                'type': 'bridge_port_action',
+                                'status': 'success' if success else 'error',
+                                'message': message
+                            }, ensure_ascii=False))
+                        except Exception as e:
+                            await websocket.send(json.dumps({
+                                'type': 'bridge_port_action',
+                                'status': 'error',
+                                'message': str(e)
+                            }, ensure_ascii=False))
+                    elif action == 'delete_bridge_port':
+                        print(f"[单连接] 收到 delete_bridge_port 命令")
+                        try:
+                            api = get_bridge_action_api(device_ip, username, password)
+                            port_id = data.get('port_id', '')
+                            success, message = api.delete_bridge_port(port_id)
+                            await websocket.send(json.dumps({
+                                'type': 'bridge_port_action',
+                                'status': 'success' if success else 'error',
+                                'message': message
+                            }, ensure_ascii=False))
+                        except Exception as e:
+                            await websocket.send(json.dumps({
+                                'type': 'bridge_port_action',
+                                'status': 'error',
+                                'message': str(e)
+                            }, ensure_ascii=False))
+                    elif action == 'get_file_list':
+                        print(f"[单连接] 收到 get_file_list 命令")
+                        await handle_get_file_list(websocket, device_ip, username, password)
+                    elif action == 'download_file':
+                        print(f"[单连接] 收到 download_file 命令")
+                        file_name = data.get('file_name', '')
+                        await handle_download_file(websocket, device_ip, username, password, file_name)
+                    elif action == 'delete_file':
+                        print(f"[单连接] 收到 delete_file 命令")
+                        file_name = data.get('file_name', '')
+                        await handle_delete_file(websocket, device_ip, username, password, file_name)
 
                 except json.JSONDecodeError:
                     pass
@@ -4372,6 +5576,7 @@ async def handle_websocket(websocket: WebSocketConn) -> None:
 
 
 import re
+import base64
 
 def decode_mikrotik_hex_escape(text: str) -> str:
     """解码 Telnet 的十六进制转义序列 <XX XX XX> 为 UTF-8 字符"""
@@ -4383,6 +5588,200 @@ def decode_mikrotik_hex_escape(text: str) -> str:
         except (ValueError, UnicodeDecodeError):
             return match.group(0)
     return re.sub(r'<([0-9A-Fa-f]{2}(?:\s+[0-9A-Fa-f]{2})*)>', replace_hex, text)
+
+async def handle_get_file_list(websocket: WebSocketConn, device_ip: str, username: str, password: str) -> None:
+    """获取设备文件列表"""
+    try:
+        api = MikroTikAPI(device_ip, username, password, port=8728, use_ssl=False)
+        success, message = api.login()
+        if not success:
+            await websocket.send(json.dumps({
+                'type': 'file_list',
+                'status': 'error',
+                'message': f'登录失败: {message}'
+            }, ensure_ascii=False))
+            return
+
+        try:
+            api.flush_socket()
+            api.write_sentence(['/file/print', '.proplist=name,size,creation-time,type'])
+            
+            file_list = []
+            while True:
+                response = api.read_sentence(timeout=10)
+                logger.info(f"文件列表响应: {response[:3]}...")
+                
+                if '!done' in response:
+                    break
+                if '!trap' in response:
+                    trap_msg = ''
+                    for line in response:
+                        if line.startswith('=message='):
+                            trap_msg = line[9:]
+                    logger.error(f"文件列表获取失败: {trap_msg}")
+                    break
+                if '!re' in response:
+                    current_file = {}
+                    for line in response:
+                        if line.startswith('='):
+                            parts = line[1:].split('=', 1)
+                            if len(parts) == 2:
+                                key, value = parts
+                                current_file[key] = value
+                    
+                    if current_file:
+                        name = current_file.get('name', '')
+                        if not name:
+                            continue
+                        
+                        size = 0
+                        size_str = current_file.get('size', '0')
+                        try:
+                            size = int(size_str)
+                        except:
+                            pass
+                        
+                        date = current_file.get('creation-time', '')
+                        file_type = current_file.get('type', 'file')
+                        
+                        parts = name.rsplit('/', 1)
+                        if len(parts) > 1:
+                            folder_path = parts[0]
+                            file_name = parts[1]
+                        else:
+                            folder_path = ''
+                            file_name = name
+                        
+                        is_disk = (file_type == 'disk')
+                        is_folder = (file_type == 'directory')
+                        
+                        file_list.append({
+                            'name': file_name,
+                            'full_path': name,
+                            'folder_path': folder_path,
+                            'size': size,
+                            'date': date,
+                            'type': file_type,
+                            'is_folder': is_folder,
+                            'is_disk': is_disk
+                        })
+            
+            logger.info(f"获取到 {len(file_list)} 个文件")
+            await websocket.send(json.dumps({
+                'type': 'file_list',
+                'status': 'success',
+                'files': file_list
+            }, ensure_ascii=False))
+        finally:
+            api.close()
+    except Exception as e:
+        logger.error(f"获取文件列表失败: {e}")
+        await websocket.send(json.dumps({
+            'type': 'file_list',
+            'status': 'error',
+            'message': str(e)
+        }, ensure_ascii=False))
+
+async def handle_download_file(websocket: WebSocketConn, device_ip: str, username: str, password: str, file_name: str) -> None:
+    """下载设备文件（通过FTP）"""
+    try:
+        import ftplib
+        import io
+        import tempfile
+        
+        ftp = ftplib.FTP()
+        ftp.encoding = 'latin-1'
+        ftp.connect(device_ip, 21, timeout=10)
+        
+        ftp_password = password if password else ''
+        try:
+            ftp.login(username, ftp_password)
+        except ftplib.error_perm as login_err:
+            if '530' in str(login_err) and not ftp_password:
+                logger.warning(f"FTP登录失败，尝试匿名登录: {device_ip}")
+                try:
+                    ftp.login('anonymous', '')
+                except Exception as anon_err:
+                    logger.error(f"FTP匿名登录也失败: {anon_err}")
+                    raise login_err
+            else:
+                raise
+        
+        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+            ftp.retrbinary(f'RETR {file_name}', tmp_file.write)
+            tmp_file.seek(0)
+            file_content = tmp_file.read()
+        
+        ftp.quit()
+        
+        file_data_base64 = base64.b64encode(file_content).decode('utf-8')
+        
+        await websocket.send(json.dumps({
+            'type': 'file_download',
+            'status': 'success',
+            'file_name': file_name,
+            'file_data': file_data_base64
+        }, ensure_ascii=False))
+    except Exception as e:
+        logger.error(f"下载文件失败: {e}")
+        await websocket.send(json.dumps({
+            'type': 'file_download',
+            'status': 'error',
+            'message': str(e)
+        }, ensure_ascii=False))
+
+async def handle_delete_file(websocket: WebSocketConn, device_ip: str, username: str, password: str, file_name: str) -> None:
+    """删除设备文件（通过API）"""
+    try:
+        api = MikroTikAPI(device_ip, username, password, port=8728, use_ssl=False)
+        success, message = api.login()
+        if not success:
+            await websocket.send(json.dumps({
+                'type': 'file_action',
+                'status': 'error',
+                'message': f'登录失败: {message}'
+            }, ensure_ascii=False))
+            return
+
+        try:
+            api.write_sentence(['/file/remove', f'=numbers={file_name}'])
+            
+            error_msg = ''
+            is_success = False
+            while True:
+                response = api.read_sentence(timeout=10)
+                if '!done' in response:
+                    is_success = True
+                    break
+                if '!trap' in response:
+                    for line in response:
+                        if line.startswith('=message='):
+                            error_msg = line[9:]
+                    break
+            
+            if is_success:
+                await websocket.send(json.dumps({
+                    'type': 'file_action',
+                    'status': 'success',
+                    'action': 'delete',
+                    'file_name': file_name,
+                    'message': f'文件 "{file_name}" 已删除'
+                }, ensure_ascii=False))
+            else:
+                await websocket.send(json.dumps({
+                    'type': 'file_action',
+                    'status': 'error',
+                    'message': error_msg or '删除失败'
+                }, ensure_ascii=False))
+        finally:
+            api.close()
+    except Exception as e:
+        logger.error(f"删除文件失败: {e}")
+        await websocket.send(json.dumps({
+            'type': 'file_action',
+            'status': 'error',
+            'message': str(e)
+        }, ensure_ascii=False))
 
 async def handle_terminal_session(websocket: WebSocketConn, device_ip: str, username: str, password: str) -> None:
     """处理终端会话 - 通过 Telnet 连接设备"""

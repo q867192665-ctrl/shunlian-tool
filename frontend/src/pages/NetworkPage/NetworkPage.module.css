@@ -700,6 +700,12 @@
   text-overflow: ellipsis;
 }
 
+.tableCellCenter {
+  composes: tableCell;
+  justify-content: center;
+  text-align: center;
+}
+
 .monospace {
   font-family: var(--font-mono);
   font-size: 13px;

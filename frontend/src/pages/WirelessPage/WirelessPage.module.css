@@ -169,11 +169,12 @@
 }
 
 .weakSignalRow {
-  background: rgba(245, 158, 11, 0.06);
+  background: rgba(245, 158, 11, 0.12);
+  border-left: 3px solid #f59e0b;
 }
 
 .weakSignalRow:hover {
-  background: rgba(245, 158, 11, 0.12);
+  background: rgba(245, 158, 11, 0.18);
 }
 
 .tableCell {
@@ -184,6 +185,11 @@
   color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tableCellCenter {
+  composes: tableCell;
+  justify-content: center;
 }
 
 .monospace {

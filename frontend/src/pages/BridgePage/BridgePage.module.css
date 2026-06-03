@@ -146,7 +146,7 @@
 
 .tableHeader {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(8, 1fr);
   gap: var(--space-md);
   padding: var(--space-md) var(--space-lg);
   background: var(--color-bg-tertiary);
@@ -160,7 +160,7 @@
 
 .tableRow {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(8, 1fr);
   gap: var(--space-md);
   padding: var(--space-md) var(--space-lg);
   border-bottom: 1px solid var(--color-border-primary);
@@ -183,6 +183,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+
+.tableCellCenter {
+  composes: tableCell;
+  justify-content: center;
+  text-align: center;
 }
 
 .monospace {
@@ -306,13 +312,88 @@
   background: #e55a2b;
 }
 
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+}
+
+.sectionButton {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: 6px;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sectionButton:hover {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-accent-primary);
+  color: var(--color-accent-primary);
+}
+
+.actionButtons {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.actionButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 4px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 13px;
+}
+
+.actionButton:hover {
+  border-color: var(--color-accent-primary);
+  color: var(--color-accent-primary);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.deleteButton:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+/* 主机表保持7列 */
+.hostsTable .tableHeader,
+.hostsTable .tableRow {
+  grid-template-columns: repeat(6, 1fr);
+}
+
 @media (max-width: 1200px) {
   .tableHeader,
   .tableRow {
+    grid-template-columns: repeat(5, 1fr);
+  }
+
+  .tableCell:nth-child(n + 6) {
+    display: none;
+  }
+
+  .hostsTable .tableHeader,
+  .hostsTable .tableRow {
     grid-template-columns: repeat(4, 1fr);
   }
 
-  .tableCell:nth-child(n + 5) {
+  .hostsTable .tableCell:nth-child(n + 5) {
     display: none;
   }
 }
@@ -342,10 +423,19 @@
 
   .tableHeader,
   .tableRow {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .tableCell:nth-child(n + 4) {
+    display: none;
+  }
+
+  .hostsTable .tableHeader,
+  .hostsTable .tableRow {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .tableCell:nth-child(n + 3) {
+  .hostsTable .tableCell:nth-child(n + 3) {
     display: none;
   }
 }

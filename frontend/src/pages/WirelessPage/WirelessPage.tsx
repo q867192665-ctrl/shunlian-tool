@@ -48,6 +48,9 @@ interface WirelessClient {
   'rx-rate'?: string;
   uptime?: string;
   'signal-strength'?: string;
+  'tx-signal-quality'?: string;
+  'rx-signal-quality'?: string;
+  'radio-name'?: string;
 }
 
 interface SecurityProfile {
@@ -194,6 +197,9 @@ export const WirelessPage: React.FC = () => {
         'rx-rate': c.rx_rate,
         uptime: c.uptime,
         'signal-strength': c.tx_signal,
+        'tx-signal-quality': c.tx_signal_quality,
+        'rx-signal-quality': c.rx_signal_quality,
+        'radio-name': c.radio_name || '',
       }));
       setClients(mapped);
       setInitialLoading(false);
@@ -492,8 +498,11 @@ export const WirelessPage: React.FC = () => {
     ];
     
     for (const field of fields) {
-      const newValue = (editingInterface as any)[field.originalKey] || '';
+      let newValue = (editingInterface as any)[field.originalKey] || '';
       const oldValue = (originalInterface as any)[field.originalKey] || '';
+      if (field.originalKey === 'scan-list' && newValue === '') {
+        newValue = 'default';
+      }
       if (newValue !== oldValue) {
         changed[field.key] = newValue;
       }
@@ -1042,19 +1051,19 @@ export const WirelessPage: React.FC = () => {
               </div>
               <div className={styles.table}>
                 <div className={styles.tableHeader}>
-                  <div className={styles.tableCell}>名称</div>
-                  <div className={styles.tableCell}>SSID</div>
-                  <div className={styles.tableCell}>频段</div>
-                  <div className={styles.tableCell}>频率</div>
-                  <div className={styles.tableCell}>信道宽度</div>
-                  <div className={styles.tableCell}>模式</div>
-                  <div className={styles.tableCell}>协议</div>
-                  <div className={styles.tableCell}>状态</div>
+                  <div className={styles.tableCellCenter}>名称</div>
+                  <div className={styles.tableCellCenter}>SSID</div>
+                  <div className={styles.tableCellCenter}>频段</div>
+                  <div className={styles.tableCellCenter}>频率</div>
+                  <div className={styles.tableCellCenter}>信道宽度</div>
+                  <div className={styles.tableCellCenter}>模式</div>
+                  <div className={styles.tableCellCenter}>协议</div>
+                  <div className={styles.tableCellCenter}>状态</div>
                   <div className={styles.tableCell}>操作</div>
                 </div>
                 {activeInterfaces.map((iface, index) => (
                   <div key={iface['.id'] || index} className={styles.tableRow}>
-                    <div className={styles.tableCell}>
+                    <div className={styles.tableCellCenter}>
                       <span
                         className={`${styles.monospace} ${styles.copyable}`}
                         onClick={() => handleCopyToClipboard(iface.name, '接口名')}
@@ -1063,31 +1072,31 @@ export const WirelessPage: React.FC = () => {
                         {iface.name}
                       </span>
                     </div>
-                    <div className={styles.tableCell}>
+                    <div className={styles.tableCellCenter}>
                       <span className={styles.ssidText}>{iface.ssid || '—'}</span>
                     </div>
-                    <div className={styles.tableCell}>{iface.band || '—'}</div>
-                    <div className={styles.tableCell}>
+                    <div className={styles.tableCellCenter}>{iface.band || '—'}</div>
+                    <div className={styles.tableCellCenter}>
                       <span className={styles.monospace}>{iface.frequency || '—'}</span>
                     </div>
-                    <div className={styles.tableCell}>
+                    <div className={styles.tableCellCenter}>
                       <span className={styles.monospace}>{iface['channel-width'] || '—'}</span>
                     </div>
-                    <div className={styles.tableCell}>
+                    <div className={styles.tableCellCenter}>
                       {iface.mode ? (
                         <span className={`${styles.badge} ${styles.badgeInfo}`}>
                           {iface.mode}
                         </span>
                       ) : '—'}
                     </div>
-                    <div className={styles.tableCell}>
+                    <div className={styles.tableCellCenter}>
                       {iface['wireless-protocol'] ? (
                         <span className={`${styles.badge} ${styles.badgeDefault}`}>
                           {iface['wireless-protocol']}
                         </span>
                       ) : '—'}
                     </div>
-                    <div className={styles.tableCell}>
+                    <div className={styles.tableCellCenter}>
                       <span className={`${styles.badge} ${styles.badgeSuccess}`}>
                         <CheckCircleOutlined className={styles.badgeIcon} />
                         运行中
@@ -1125,19 +1134,19 @@ export const WirelessPage: React.FC = () => {
                 <h2 className={styles.sectionTitle}>已禁用接口</h2>
                 <div className={styles.table}>
                   <div className={styles.tableHeader}>
-                    <div className={styles.tableCell}>名称</div>
-                    <div className={styles.tableCell}>SSID</div>
-                    <div className={styles.tableCell}>频段</div>
-                    <div className={styles.tableCell}>频率</div>
-                    <div className={styles.tableCell}>信道宽度</div>
-                    <div className={styles.tableCell}>模式</div>
-                    <div className={styles.tableCell}>协议</div>
-                    <div className={styles.tableCell}>状态</div>
+                    <div className={styles.tableCellCenter}>名称</div>
+                    <div className={styles.tableCellCenter}>SSID</div>
+                    <div className={styles.tableCellCenter}>频段</div>
+                    <div className={styles.tableCellCenter}>频率</div>
+                    <div className={styles.tableCellCenter}>信道宽度</div>
+                    <div className={styles.tableCellCenter}>模式</div>
+                    <div className={styles.tableCellCenter}>协议</div>
+                    <div className={styles.tableCellCenter}>状态</div>
                     <div className={styles.tableCell}>操作</div>
                   </div>
                   {disabledInterfaces.map((iface, index) => (
                     <div key={iface['.id'] || index} className={styles.tableRow}>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         <span
                           className={`${styles.monospace} ${styles.copyable}`}
                           onClick={() => handleCopyToClipboard(iface.name, '接口名')}
@@ -1146,31 +1155,31 @@ export const WirelessPage: React.FC = () => {
                           {iface.name}
                         </span>
                       </div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         <span className={styles.ssidText}>{iface.ssid || '—'}</span>
                       </div>
-                      <div className={styles.tableCell}>{iface.band || '—'}</div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>{iface.band || '—'}</div>
+                      <div className={styles.tableCellCenter}>
                         <span className={styles.monospace}>{iface.frequency || '—'}</span>
                       </div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         <span className={styles.monospace}>{iface['channel-width'] || '—'}</span>
                       </div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         {iface.mode ? (
                           <span className={`${styles.badge} ${styles.badgeInfo}`}>
                             {iface.mode}
                           </span>
                         ) : '—'}
                       </div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         {iface['wireless-protocol'] ? (
                           <span className={`${styles.badge} ${styles.badgeDefault}`}>
                             {iface['wireless-protocol']}
                           </span>
                         ) : '—'}
                       </div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         <span className={`${styles.badge} ${styles.badgeDefault}`}>
                           已禁用
                         </span>
@@ -1203,19 +1212,19 @@ export const WirelessPage: React.FC = () => {
                 <h2 className={styles.sectionTitle}>未运行接口</h2>
                 <div className={styles.table}>
                   <div className={styles.tableHeader}>
-                    <div className={styles.tableCell}>名称</div>
-                    <div className={styles.tableCell}>SSID</div>
-                    <div className={styles.tableCell}>频段</div>
-                    <div className={styles.tableCell}>频率</div>
-                    <div className={styles.tableCell}>信道宽度</div>
-                    <div className={styles.tableCell}>模式</div>
-                    <div className={styles.tableCell}>协议</div>
-                    <div className={styles.tableCell}>状态</div>
+                    <div className={styles.tableCellCenter}>名称</div>
+                    <div className={styles.tableCellCenter}>SSID</div>
+                    <div className={styles.tableCellCenter}>频段</div>
+                    <div className={styles.tableCellCenter}>频率</div>
+                    <div className={styles.tableCellCenter}>信道宽度</div>
+                    <div className={styles.tableCellCenter}>模式</div>
+                    <div className={styles.tableCellCenter}>协议</div>
+                    <div className={styles.tableCellCenter}>状态</div>
                     <div className={styles.tableCell}>操作</div>
                   </div>
                   {inactiveInterfaces.map((iface, index) => (
                     <div key={iface['.id'] || index} className={styles.tableRow}>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         <span
                           className={`${styles.monospace} ${styles.copyable}`}
                           onClick={() => handleCopyToClipboard(iface.name, '接口名')}
@@ -1224,31 +1233,31 @@ export const WirelessPage: React.FC = () => {
                           {iface.name}
                         </span>
                       </div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         <span className={styles.ssidText}>{iface.ssid || '—'}</span>
                       </div>
-                      <div className={styles.tableCell}>{iface.band || '—'}</div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>{iface.band || '—'}</div>
+                      <div className={styles.tableCellCenter}>
                         <span className={styles.monospace}>{iface.frequency || '—'}</span>
                       </div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         <span className={styles.monospace}>{iface['channel-width'] || '—'}</span>
                       </div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         {iface.mode ? (
                           <span className={`${styles.badge} ${styles.badgeInfo}`}>
                             {iface.mode}
                           </span>
                         ) : '—'}
                       </div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         {iface['wireless-protocol'] ? (
                           <span className={`${styles.badge} ${styles.badgeDefault}`}>
                             {iface['wireless-protocol']}
                           </span>
                         ) : '—'}
                       </div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         <span className={`${styles.badge} ${styles.badgeWarning}`}>
                           未运行
                         </span>
@@ -1314,6 +1323,7 @@ export const WirelessPage: React.FC = () => {
                   interface={editingInterface}
                   onChange={setEditingInterface}
                   routerIp={routerIp}
+                  securityProfiles={securityProfiles}
                 />
               )}
             </Modal>
@@ -1359,72 +1369,108 @@ export const WirelessPage: React.FC = () => {
               <h2 className={styles.sectionTitle}>终端列表</h2>
               <div className={styles.table}>
                 <div className={styles.tableHeader}>
-                  <div className={styles.tableCell}>接口</div>
-                  <div className={styles.tableCell}>MAC 地址</div>
-                  <div className={styles.tableCell}>信号强度（发送\接收）</div>
-                  <div className={styles.tableCell}>发送速率</div>
-                  <div className={styles.tableCell}>接收速率</div>
-                  <div className={styles.tableCell}>在线时长</div>
+                  <div className={styles.tableCell}>接口名称</div>
+                  <div className={styles.tableCellCenter}>射频名称</div>
+                  <div className={styles.tableCellCenter}>设备地址</div>
+                  <div className={styles.tableCellCenter}>信号强度</div>
+                  <div className={styles.tableCellCenter}>传输速率</div>
+                  <div className={styles.tableCellCenter}>信号质量</div>
+                  <div className={styles.tableCellCenter}>连接时长</div>
                   <div className={styles.tableCell}>操作</div>
                 </div>
-                {clients.map((client, index) => (
-                  <div key={`${client['mac-address']}-${index}`} className={`${styles.tableRow} ${!isStrongSignal(client.signal || client['signal-strength']) ? styles.weakSignalRow : ''}`}>
-                    <div
-                      className={`${styles.tableCell} ${styles.copyable}`}
-                      onClick={() => handleCopyToClipboard(client.interface, '接口')}
-                      title="点击复制"
-                    >
-                      {client.interface}
-                    </div>
-                    <div className={styles.tableCell}>
-                      <span
-                        className={`${styles.monospace} ${styles.copyable}`}
-                        onClick={() => handleCopyToClipboard(client['mac-address'], 'MAC地址')}
+                {clients.map((client, index) => {
+                  const hasTxSignal = !!(client.signal || client['signal-strength']);
+                  const hasRxSignal = !!client['rx-signal'];
+                  const hasBothSignals = hasTxSignal && hasRxSignal;
+                  const displaySignal = hasTxSignal ? (client.signal || client['signal-strength']) : client['rx-signal'];
+                  
+                  return (
+                    <div key={`${client['mac-address']}-${index}`} className={`${styles.tableRow} ${!isStrongSignal(displaySignal) ? styles.weakSignalRow : ''}`}>
+                      <div
+                        className={`${styles.tableCell} ${styles.copyable}`}
+                        onClick={() => handleCopyToClipboard(client.interface, '接口')}
                         title="点击复制"
                       >
-                        {client['mac-address']}
-                      </span>
-                    </div>
-                    <div className={styles.tableCell}>
-                      <span className={`${styles.signalBadge} ${isStrongSignal(client.signal || client['signal-strength']) ? styles.strongSignal : styles.weakSignal}`}>
-                        <SignalFilled className={styles.signalIcon} />
-                        {parseSignalStrength(client.signal || client['signal-strength']) ?? '—'}
-                        {client['rx-signal'] && client['rx-signal'] !== '--' && (
-                          <span style={{ opacity: 0.7, marginLeft: 4 }}>
-                            \{parseSignalStrength(client['rx-signal']) ?? '—'}
+                        {client.interface}
+                      </div>
+                      <div className={styles.tableCellCenter}>
+                        {client['radio-name'] || '—'}
+                      </div>
+                      <div className={styles.tableCellCenter}>
+                        <span
+                          className={`${styles.monospace} ${styles.copyable}`}
+                          onClick={() => handleCopyToClipboard(client['mac-address'], 'MAC地址')}
+                          title="点击复制"
+                        >
+                          {client['mac-address']}
+                        </span>
+                      </div>
+                      <div className={styles.tableCellCenter}>
+                        <span className={`${styles.signalBadge} ${isStrongSignal(displaySignal) ? styles.strongSignal : styles.weakSignal}`}>
+                          <SignalFilled className={styles.signalIcon} />
+                          <span>
+                            {hasBothSignals ? (
+                              <>
+                                {parseSignalStrength(client.signal || client['signal-strength']) ?? '—'}
+                                <span style={{ opacity: 0.5, margin: '0 2px' }}>/</span>
+                                {parseSignalStrength(client['rx-signal']) ?? '—'}
+                              </>
+                            ) : (
+                              <>{parseSignalStrength(displaySignal) ?? '—'}</>
+                            )}
                           </span>
-                        )}
-                      </span>
+                        </span>
+                      </div>
+                      <div className={styles.tableCellCenter}>
+                        <span className={styles.monospace}>
+                          {hasBothSignals ? (
+                            <>
+                              {client['tx-rate'] || '—'}
+                              <span style={{ opacity: 0.5, margin: '0 2px' }}>/</span>
+                              {client['rx-rate'] || '—'}
+                            </>
+                          ) : (
+                            <>{client['tx-rate'] || client['rx-rate'] || '—'}</>
+                          )}
+                        </span>
+                      </div>
+                      <div className={styles.tableCellCenter}>
+                        <span className={styles.monospace}>
+                          {hasBothSignals ? (
+                            <>
+                              {client['tx-signal-quality'] || '—'}
+                              <span style={{ opacity: 0.5, margin: '0 2px' }}>/</span>
+                              {client['rx-signal-quality'] || '—'}
+                            </>
+                          ) : (
+                            <>{client['tx-signal-quality'] || client['rx-signal-quality'] || '—'}</>
+                          )}
+                        </span>
+                      </div>
+                      <div className={styles.tableCellCenter}>{client.uptime || '—'}</div>
+                      <div className={styles.tableCell}>
+                        <button
+                          className={styles.deleteButton}
+                          title="踢除终端"
+                          onClick={() => {
+                            const mac = client['mac-address'];
+                            const clientId = client['.id'] || '';
+                            Modal.confirm({
+                              title: '确认踢除',
+                              content: `确定要踢除终端 ${mac} 吗？`,
+                              okText: '踢除',
+                              okType: 'danger',
+                              cancelText: '取消',
+                              onOk: () => handleRemoveClient(clientId, mac)
+                            });
+                          }}
+                        >
+                          <DeleteOutlined />
+                        </button>
+                      </div>
                     </div>
-                    <div className={styles.tableCell}>
-                      <span className={styles.monospace}>{client['tx-rate'] || '—'}</span>
-                    </div>
-                    <div className={styles.tableCell}>
-                      <span className={styles.monospace}>{client['rx-rate'] || '—'}</span>
-                    </div>
-                    <div className={styles.tableCell}>{client.uptime || '—'}</div>
-                    <div className={styles.tableCell}>
-                      <button
-                        className={styles.deleteButton}
-                        title="踢除终端"
-                        onClick={() => {
-                          const mac = client['mac-address'];
-                          const clientId = client['.id'] || '';
-                          Modal.confirm({
-                            title: '确认踢除',
-                            content: `确定要踢除终端 ${mac} 吗？`,
-                            okText: '踢除',
-                            okType: 'danger',
-                            cancelText: '取消',
-                            onOk: () => handleRemoveClient(clientId, mac)
-                          });
-                        }}
-                      >
-                        <DeleteOutlined />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
                 {clients.length === 0 && (
                   <div className={styles.emptyRow}>
                     <span>暂无连接的终端</span>
@@ -1481,18 +1527,18 @@ export const WirelessPage: React.FC = () => {
               </div>
               <div className={styles.table}>
                 <div className={styles.tableHeader}>
-                  <div className={styles.tableCell}>名称</div>
-                  <div className={styles.tableCell}>模式</div>
-                  <div className={styles.tableCell}>认证类型</div>
-                  <div className={styles.tableCell}>单播加密</div>
-                  <div className={styles.tableCell}>组播加密</div>
+                  <div className={styles.tableCellCenter}>名称</div>
+                  <div className={styles.tableCellCenter}>模式</div>
+                  <div className={styles.tableCellCenter}>认证类型</div>
+                  <div className={styles.tableCellCenter}>单播加密</div>
+                  <div className={styles.tableCellCenter}>组播加密</div>
                   <div className={styles.tableCell}>操作</div>
                 </div>
                 {profiles.map((profile, index) => {
                   const isEnabled = profile.mode === 'dynamic-keys';
                   return (
                     <div key={profile.name || index} className={styles.tableRow}>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         <span
                           className={`${styles.monospace} ${styles.copyable}`}
                           onClick={() => handleCopyToClipboard(profile.name, '配置名')}
@@ -1501,14 +1547,14 @@ export const WirelessPage: React.FC = () => {
                           {profile.name}
                         </span>
                       </div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         {profile.mode && profile.mode !== '--' ? (
                           <span className={`${styles.badge} ${styles.badgeInfo}`}>
                             {profile.mode}
                           </span>
                         ) : '—'}
                       </div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         {profile.mode && profile.mode !== 'none' && profile.mode !== '--' ? (
                           <span className={`${styles.badge} ${styles.badgeSuccess}`}>
                             <SafetyOutlined className={styles.badgeIcon} />
@@ -1522,14 +1568,14 @@ export const WirelessPage: React.FC = () => {
                           </span>
                         )}
                       </div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         <span className={styles.monospace}>
                           {profile['unicast-ciphers'] && profile['unicast-ciphers'] !== '--'
                             ? profile['unicast-ciphers']
                             : '—'}
                         </span>
                       </div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         <span className={styles.monospace}>
                           {profile['group-ciphers'] && profile['group-ciphers'] !== '--'
                             ? profile['group-ciphers']

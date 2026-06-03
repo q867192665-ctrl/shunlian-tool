@@ -245,6 +245,12 @@
   min-width: 0;
 }
 
+.tableCellCenter {
+  composes: tableCell;
+  justify-content: center;
+  text-align: center;
+}
+
 .monospace {
   font-family: var(--font-family-mono);
   font-size: 13px;

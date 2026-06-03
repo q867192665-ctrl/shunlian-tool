@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager
 
 import psutil
 import yaml
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File as FastAPIFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
@@ -2211,27 +2211,10 @@ async def get_bridge_ports(request: DeviceRequest):
         mt_api, err = _get_api_from_pool(request.ip)
         if err:
             return {"status": "error", "message": err, "bridge_ports": []}
-        username = mt_api.username
-        password = mt_api.password
-        with api_connection(request.ip, username, password) as temp_api:
-            temp_api.write_sentence(['/interface/bridge/port/print'])
-            ports = []
-            while True:
-                try:
-                    response = temp_api.read_sentence(timeout=10)
-                except Exception:
-                    break
-                if '!done' in response:
-                    break
-                if '!re' in response:
-                    port = {}
-                    for line in response:
-                        if line.startswith('='):
-                            parts = line[1:].split('=', 1)
-                            if len(parts) == 2:
-                                port[parts[0]] = parts[1]
-                    if port.get('bridge'):
-                        ports.append(port)
+        with api_connection(request.ip, mt_api.username, mt_api.password) as temp_api:
+            ports = temp_api.get_bridge_ports()
+            if ports is None:
+                return {"status": "error", "message": "获取桥接端口失败", "bridge_ports": []}
             return {"status": "success", "bridge_ports": ports}
     except Exception as e:
         logger.error(f"获取桥接端口错误: {request.ip} - {e}")
@@ -2247,28 +2230,10 @@ async def get_bridges(request: DeviceRequest):
         if err:
             logger.error(f"获取API连接失败: {err}")
             return {"status": "error", "message": err, "bridges": []}
-        username = mt_api.username
-        password = mt_api.password
-        with api_connection(request.ip, username, password) as temp_api:
-            temp_api.write_sentence(['/interface/bridge/print'])
-            bridges = []
-            while True:
-                try:
-                    response = temp_api.read_sentence(timeout=10)
-                    logger.debug(f"Bridge response: {response}")
-                except Exception as e:
-                    logger.error(f"读取bridge响应异常: {e}")
-                    break
-                if '!done' in response:
-                    break
-                if '!re' in response:
-                    bridge = {}
-                    for line in response:
-                        if line.startswith('='):
-                            parts = line[1:].split('=', 1)
-                            if len(parts) == 2:
-                                bridge[parts[0]] = parts[1]
-                    bridges.append(bridge)
+        with api_connection(request.ip, mt_api.username, mt_api.password) as temp_api:
+            bridges = temp_api.get_bridges()
+            if bridges is None:
+                return {"status": "error", "message": "获取桥接口列表失败", "bridges": []}
             logger.info(f"获取到 {len(bridges)} 个网桥")
             return {"status": "success", "bridges": bridges}
     except Exception as e:
@@ -2285,28 +2250,10 @@ async def get_bridge_hosts(request: DeviceRequest):
         if err:
             logger.error(f"获取API连接失败: {err}")
             return {"status": "error", "message": err, "hosts": []}
-        username = mt_api.username
-        password = mt_api.password
-        with api_connection(request.ip, username, password) as temp_api:
-            temp_api.write_sentence(['/interface/bridge/host/print'])
-            hosts = []
-            while True:
-                try:
-                    response = temp_api.read_sentence(timeout=10)
-                    logger.debug(f"Bridge host response: {response}")
-                except Exception as e:
-                    logger.error(f"读取bridge host响应异常: {e}")
-                    break
-                if '!done' in response:
-                    break
-                if '!re' in response:
-                    host = {}
-                    for line in response:
-                        if line.startswith('='):
-                            parts = line[1:].split('=', 1)
-                            if len(parts) == 2:
-                                host[parts[0]] = parts[1]
-                    hosts.append(host)
+        with api_connection(request.ip, mt_api.username, mt_api.password) as temp_api:
+            hosts = temp_api.get_bridge_hosts()
+            if hosts is None:
+                return {"status": "error", "message": "获取桥接主机表失败", "hosts": []}
             logger.info(f"获取到 {len(hosts)} 个主机记录")
             return {"status": "success", "hosts": hosts}
     except Exception as e:
@@ -2351,6 +2298,7 @@ async def get_wireless_clients(request: DeviceRequest):
                         'tx-rate': client.get('tx-rate', '--'),
                         'rx-rate': client.get('rx-rate', '--'),
                         'uptime': client.get('uptime', '--'),
+                        'radio-name': client.get('radio-name', '--'),
                     })
         logger.info(f"Returning {len(clients)} wireless clients with IDs: {[c['.id'] for c in clients]}")
         return {"status": "success", "clients": clients}
@@ -2502,16 +2450,10 @@ async def get_changelog():
 
 @app.get("/api/app-version")
 async def get_app_version():
-    """获取当前程序版本号"""
+    """获取当前程序版本号（从更新日志中解析，兼容打包环境）"""
     try:
-        setup_path = os.path.join(get_base_dir(), 'setup.iss')
-        if os.path.exists(setup_path):
-            with open(setup_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if line.startswith('#define AppVersion'):
-                        version = line.split('"')[1]
-                        return {"version": version}
-        return {"version": "1.0.0"}
+        version = _parse_current_version()
+        return {"version": version}
     except Exception as e:
         logger.error(f"读取版本号失败: {e}")
         return {"version": "1.0.0"}
@@ -2537,7 +2479,7 @@ def _parse_current_version():
         if os.path.exists(changelog_path):
             with open(changelog_path, 'r', encoding='utf-8') as f:
                 for line in f:
-                    match = re.match(r'^##\s+v?(\d+\.\d+\.\d+)', line)
+                    match = re.match(r'^##\s+v?(\d+\.\d+\.\d+(?:\.\d+)?)', line)
                     if match:
                         return match.group(1)
     except Exception:
@@ -2586,6 +2528,40 @@ async def check_update():
     except Exception as e:
         logger.warning(f"检查更新失败: {e}")
         return {"has_update": False, "current_version": current_version, "message": f"检查更新失败: {e}"}
+
+
+@app.post("/api/files/upload")
+async def upload_file(
+    file: UploadFile = FastAPIFile(...),
+    ip: str = FastAPIFile(...),
+    username: str = FastAPIFile(...),
+    password: str = FastAPIFile(...)
+):
+    """上传文件到设备（通过FTP）"""
+    if not ip:
+        raise HTTPException(status_code=400, detail="缺少设备IP")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="缺少文件名")
+    
+    try:
+        import ftplib
+        import io
+        
+        file_content = await file.read()
+        
+        ftp = ftplib.FTP()
+        ftp.encoding = 'latin-1'
+        ftp.connect(ip, 21, timeout=10)
+        ftp.login(username, password if password else '')
+        
+        file_io = io.BytesIO(file_content)
+        ftp.storbinary(f'STOR {file.filename}', file_io)
+        ftp.quit()
+        
+        return {"status": "success", "message": f"文件 {file.filename} 上传成功"}
+    except Exception as e:
+        logger.error(f"上传文件失败: {ip} - {e}")
+        return {"status": "error", "message": str(e)}
 
 
 @app.post("/api/system/reboot")

@@ -51,6 +51,16 @@ if exist "dist\setup_files\static" rd /s /q "dist\setup_files\static"
 xcopy /E /I /Y "static" "dist\setup_files\static"
 if exist "更新日志.md" copy /Y "更新日志.md" "dist\setup_files\"
 
+REM 验证更新日志版本号
+echo.
+echo [VERIFY] Checking version in 更新日志.md...
+findstr /B "## v" "dist\setup_files\更新日志.md" >nul
+if errorlevel 1 (
+    echo [WARNING] 更新日志.md 版本号未正确复制！
+) else (
+    for /f "tokens=2" %%i in ('findstr /B "## v" "dist\setup_files\更新日志.md"') do echo  Version: %%i
+)
+
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "%~dp0setup.iss"
 
 echo.

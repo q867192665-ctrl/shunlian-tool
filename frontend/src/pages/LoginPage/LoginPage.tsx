@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAppState } from '../../contexts/AppContext';
 import api from '../../services/api';
+import { UpdateModal } from '../../components/organisms/UpdateModal/UpdateModal';
 import type { DeviceInfo } from '../../types/api';
 import styles from './LoginPage.module.css';
 
@@ -16,6 +17,9 @@ export const LoginPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [updateVisible, setUpdateVisible] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState({ currentVersion: '', latestVersion: '', changelog: '', downloadUrl: '' });
+  const [appVersion, setAppVersion] = useState('');
 
   useEffect(() => {
     if (rememberPassword) {
@@ -38,6 +42,38 @@ export const LoginPage: React.FC = () => {
     const interval = setInterval(fetchDevices, 5000);
     return () => clearInterval(interval);
   }, [fetchDevices]);
+
+  useEffect(() => {
+    const fetchVersion = async () => {
+      try {
+        const res = await fetch('/api/app-version');
+        const data = await res.json();
+        setAppVersion(data.version || '');
+      } catch (_) {}
+    };
+    fetchVersion();
+  }, []);
+
+  useEffect(() => {
+    const checkUpdate = async () => {
+      try {
+        const res = await fetch('/api/check-update');
+        const data = await res.json();
+        if (data.has_update) {
+          setUpdateInfo({
+            currentVersion: data.current_version || '',
+            latestVersion: data.latest_version || '',
+            changelog: data.changelog || '',
+            downloadUrl: data.download_url || '',
+          });
+          setUpdateVisible(true);
+        }
+      } catch (_) {}
+    };
+    checkUpdate();
+    const updateInterval = setInterval(checkUpdate, 60000);
+    return () => clearInterval(updateInterval);
+  }, []);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -139,10 +175,11 @@ export const LoginPage: React.FC = () => {
   });
 
   return (
+    <>
     <div className={styles.container}>
       <div className={styles.leftPanel}>
         <div className={styles.brand}>
-          <h1>瞬联调试工具</h1>
+          <h1>瞬联调试工具{appVersion && <span className={styles.versionText}>v{appVersion}</span>}</h1>
           <p>网络设备管理平台</p>
         </div>
 
@@ -277,5 +314,14 @@ export const LoginPage: React.FC = () => {
         </div>
       </div>
     </div>
+      <UpdateModal
+        visible={updateVisible}
+        currentVersion={updateInfo.currentVersion}
+        latestVersion={updateInfo.latestVersion}
+        changelog={updateInfo.changelog}
+        downloadUrl={updateInfo.downloadUrl}
+        onClose={() => setUpdateVisible(false)}
+      />
+    </>
   );
 };

@@ -19,6 +19,16 @@
   font-weight: 700;
   color: var(--color-text-primary);
   margin-bottom: var(--space-sm);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.brand .versionText {
+  font-size: 13px;
+  color: var(--color-text-primary);
+  opacity: 0.6;
+  font-weight: 400;
 }
 .brand p {
   font-size: var(--font-size-xs);

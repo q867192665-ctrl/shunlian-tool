@@ -326,7 +326,7 @@ interface NetworkPageProps {
 
 export const NetworkPage: React.FC<NetworkPageProps> = ({ targetTab, onTargetTabConsumed }) => {
   const { router } = useAppState();
-  const { sendWsMessage, ipAddresses } = useWebSocket();
+  const { sendWsMessage, ipAddresses, startIpAddressesPolling, stopIpAddressesPolling } = useWebSocket();
   const routerIp = router?.ipAddress || '';
 
   const [activeTab, setActiveTab] = useState('interfaces');
@@ -697,20 +697,18 @@ export const NetworkPage: React.FC<NetworkPageProps> = ({ targetTab, onTargetTab
     return () => clearInterval(interval);
   }, [activeTab, routerIp]);
 
-  const ipMonitorStartedRef = React.useRef(false);
-
   useEffect(() => {
-    if (activeTab === 'addresses' && routerIp && !ipMonitorStartedRef.current) {
+    if (activeTab === 'addresses' && routerIp) {
       console.log('[NetworkPage] 启动IP地址监控');
-      sendWsMessage({
-        ip: routerIp,
-        username: router?.username || '',
-        password: router?.password || '',
-        is_ip_addresses: true
-      });
-      ipMonitorStartedRef.current = true;
+      startIpAddressesPolling();
     }
-  }, [activeTab, routerIp, router?.username, router?.password, sendWsMessage]);
+    return () => {
+      if (activeTab === 'addresses') {
+        console.log('[NetworkPage] 停止IP地址监控');
+        stopIpAddressesPolling();
+      }
+    };
+  }, [activeTab, routerIp, startIpAddressesPolling, stopIpAddressesPolling]);
 
   const activeInterfaces = interfaces.filter(i => !i.disabled && i.running);
   const inactiveInterfaces = interfaces.filter(i => i.disabled || !i.running);
@@ -957,18 +955,18 @@ export const NetworkPage: React.FC<NetworkPageProps> = ({ targetTab, onTargetTab
               </div>
               <div className={styles.table}>
                 <div className={styles.tableHeader}>
-                  <div className={styles.tableCell}>地址</div>
-                  <div className={styles.tableCell}>网络</div>
-                  <div className={styles.tableCell}>接口</div>
-                  <div className={styles.tableCell}>类型</div>
-                  <div className={styles.tableCell}>注释</div>
+                  <div className={styles.tableCellCenter}>地址</div>
+                  <div className={styles.tableCellCenter}>网络</div>
+                  <div className={styles.tableCellCenter}>接口</div>
+                  <div className={styles.tableCellCenter}>类型</div>
+                  <div className={styles.tableCellCenter}>注释</div>
                   <div className={styles.tableCell}>操作</div>
                 </div>
                 {ipAddresses.map((addr, index) => {
                   const isDynamic = addr.dynamic === 'true';
                   return (
                     <div key={addr['.id'] || index} className={styles.tableRow}>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         <span
                           className={`${styles.monospace} ${styles.copyable}`}
                           onClick={() => handleCopyToClipboard(addr.address, '地址')}
@@ -977,7 +975,7 @@ export const NetworkPage: React.FC<NetworkPageProps> = ({ targetTab, onTargetTab
                           {addr.address}
                         </span>
                       </div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         <span
                           className={`${styles.monospace} ${styles.copyable}`}
                           onClick={() => handleCopyToClipboard(addr.network, '网络')}
@@ -987,13 +985,13 @@ export const NetworkPage: React.FC<NetworkPageProps> = ({ targetTab, onTargetTab
                         </span>
                       </div>
                       <div
-                        className={`${styles.tableCell} ${styles.copyable}`}
+                        className={`${styles.tableCellCenter} ${styles.copyable}`}
                         onClick={() => handleCopyToClipboard(addr.interface, '接口')}
                         title="点击复制"
                       >
                         {addr.interface}
                       </div>
-                      <div className={styles.tableCell}>
+                      <div className={styles.tableCellCenter}>
                         {isDynamic ? (
                           <span className={`${styles.badge} ${styles.badgeWarning}`}>
                             <ReloadOutlined className={styles.badgeIcon} />
@@ -1006,7 +1004,7 @@ export const NetworkPage: React.FC<NetworkPageProps> = ({ targetTab, onTargetTab
                         )}
                       </div>
                       <div
-                        className={`${styles.tableCell} ${addr.comment ? styles.copyable : ''}`}
+                        className={`${styles.tableCellCenter} ${addr.comment ? styles.copyable : ''}`}
                         onClick={() => addr.comment && handleCopyToClipboard(addr.comment, '注释')}
                         title={addr.comment ? '点击复制' : ''}
                       >
@@ -1073,17 +1071,17 @@ export const NetworkPage: React.FC<NetworkPageProps> = ({ targetTab, onTargetTab
               <h2 className={styles.sectionTitle}>路由表</h2>
               <div className={styles.table}>
                 <div className={styles.tableHeader}>
-                  <div className={styles.tableCell}>目标</div>
-                  <div className={styles.tableCell}>网关</div>
-                  <div className={styles.tableCell}>接口</div>
-                  <div className={styles.tableCell}>距离</div>
-                  <div className={styles.tableCell}>状态</div>
-                  <div className={styles.tableCell}>类型</div>
-                  <div className={styles.tableCell}>注释</div>
+                  <div className={styles.tableCellCenter}>目标</div>
+                  <div className={styles.tableCellCenter}>网关</div>
+                  <div className={styles.tableCellCenter}>接口</div>
+                  <div className={styles.tableCellCenter}>距离</div>
+                  <div className={styles.tableCellCenter}>状态</div>
+                  <div className={styles.tableCellCenter}>类型</div>
+                  <div className={styles.tableCellCenter}>注释</div>
                 </div>
                 {routes.map((route, index) => (
                   <div key={route['.id'] || index} className={styles.tableRow}>
-                    <div className={styles.tableCell}>
+                    <div className={styles.tableCellCenter}>
                       <span
                         className={`${styles.monospace} ${styles.copyable}`}
                         onClick={() => handleCopyToClipboard(route['dst-address'], '目标地址')}
@@ -1092,7 +1090,7 @@ export const NetworkPage: React.FC<NetworkPageProps> = ({ targetTab, onTargetTab
                         {route['dst-address']}
                       </span>
                     </div>
-                    <div className={styles.tableCell}>
+                    <div className={styles.tableCellCenter}>
                       <span
                         className={`${styles.monospace} ${styles.copyable}`}
                         onClick={() => handleCopyToClipboard(route.gateway, '网关')}
@@ -1108,25 +1106,25 @@ export const NetworkPage: React.FC<NetworkPageProps> = ({ targetTab, onTargetTab
                       )}
                     </div>
                     <div
-                      className={`${styles.tableCell} ${route.interface ? styles.copyable : ''}`}
+                      className={`${styles.tableCellCenter} ${route.interface ? styles.copyable : ''}`}
                       onClick={() => route.interface && handleCopyToClipboard(route.interface, '接口')}
                       title={route.interface ? '点击复制' : ''}
                     >
                       {route.interface || '—'}
                     </div>
-                    <div className={styles.tableCell}>{route.distance}</div>
-                    <div className={styles.tableCell}>
+                    <div className={styles.tableCellCenter}>{route.distance}</div>
+                    <div className={styles.tableCellCenter}>
                       <span className={`${styles.badge} ${route.active === 'true' ? styles.badgeSuccess : styles.badgeDefault}`}>
                         {route.active === 'true' ? '活跃' : '非活跃'}
                       </span>
                     </div>
-                    <div className={styles.tableCell}>
+                    <div className={styles.tableCellCenter}>
                       <span className={`${styles.badge} ${route.static === 'true' ? styles.badgeInfo : styles.badgeWarning}`}>
                         {route.static === 'true' ? '静态' : '动态'}
                       </span>
                     </div>
                     <div
-                      className={`${styles.tableCell} ${route.comment ? styles.copyable : ''}`}
+                      className={`${styles.tableCellCenter} ${route.comment ? styles.copyable : ''}`}
                       onClick={() => route.comment && handleCopyToClipboard(route.comment, '注释')}
                       title={route.comment ? '点击复制' : ''}
                     >
@@ -1170,17 +1168,17 @@ export const NetworkPage: React.FC<NetworkPageProps> = ({ targetTab, onTargetTab
               <h2 className={styles.sectionTitle}>ARP 缓存</h2>
               <div className={styles.table}>
                 <div className={styles.tableHeader}>
-                  <div className={styles.tableCell}>IP 地址</div>
-                  <div className={styles.tableCell}>MAC 地址</div>
-                  <div className={styles.tableCell}>接口</div>
-                  <div className={styles.tableCell}>状态</div>
-                  <div className={styles.tableCell}>类型</div>
-                  <div className={styles.tableCell}>DHCP</div>
-                  <div className={styles.tableCell}>注释</div>
+                  <div className={styles.tableCellCenter}>IP 地址</div>
+                  <div className={styles.tableCellCenter}>MAC 地址</div>
+                  <div className={styles.tableCellCenter}>接口</div>
+                  <div className={styles.tableCellCenter}>状态</div>
+                  <div className={styles.tableCellCenter}>类型</div>
+                  <div className={styles.tableCellCenter}>DHCP</div>
+                  <div className={styles.tableCellCenter}>注释</div>
                 </div>
                 {arpEntries.map((entry, index) => (
                   <div key={entry['.id'] || index} className={styles.tableRow}>
-                    <div className={styles.tableCell}>
+                    <div className={styles.tableCellCenter}>
                       <span
                         className={`${styles.monospace} ${styles.copyable}`}
                         onClick={() => handleCopyToClipboard(entry.address, 'IP地址')}
@@ -1189,7 +1187,7 @@ export const NetworkPage: React.FC<NetworkPageProps> = ({ targetTab, onTargetTab
                         {entry.address}
                       </span>
                     </div>
-                    <div className={styles.tableCell}>
+                    <div className={styles.tableCellCenter}>
                       <span
                         className={`${styles.monospace} ${styles.copyable}`}
                         onClick={() => handleCopyToClipboard(entry['mac-address'], 'MAC地址')}
@@ -1199,13 +1197,13 @@ export const NetworkPage: React.FC<NetworkPageProps> = ({ targetTab, onTargetTab
                       </span>
                     </div>
                     <div
-                      className={`${styles.tableCell} ${styles.copyable}`}
+                      className={`${styles.tableCellCenter} ${styles.copyable}`}
                       onClick={() => handleCopyToClipboard(entry.interface, '接口')}
                       title="点击复制"
                     >
                       {entry.interface}
                     </div>
-                    <div className={styles.tableCell}>
+                    <div className={styles.tableCellCenter}>
                       <span className={`${styles.badge} ${
                         entry.status === 'reachable' ? styles.badgeSuccess :
                         entry.status === 'stale' ? styles.badgeWarning :
@@ -1214,12 +1212,12 @@ export const NetworkPage: React.FC<NetworkPageProps> = ({ targetTab, onTargetTab
                         {entry.status || '—'}
                       </span>
                     </div>
-                    <div className={styles.tableCell}>
+                    <div className={styles.tableCellCenter}>
                       <span className={`${styles.badge} ${entry.dynamic === 'true' ? styles.badgeWarning : styles.badgeInfo}`}>
                         {entry.dynamic === 'true' ? '动态' : '静态'}
                       </span>
                     </div>
-                    <div className={styles.tableCell}>
+                    <div className={styles.tableCellCenter}>
                       {entry.dhcp === 'true' ? (
                         <CheckCircleOutlined className={styles.statusIconGood} />
                       ) : (
@@ -1227,7 +1225,7 @@ export const NetworkPage: React.FC<NetworkPageProps> = ({ targetTab, onTargetTab
                       )}
                     </div>
                     <div
-                      className={`${styles.tableCell} ${entry.comment ? styles.copyable : ''}`}
+                      className={`${styles.tableCellCenter} ${entry.comment ? styles.copyable : ''}`}
                       onClick={() => entry.comment && handleCopyToClipboard(entry.comment, '注释')}
                       title={entry.comment ? '点击复制' : ''}
                     >

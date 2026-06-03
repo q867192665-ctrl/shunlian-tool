@@ -1,14 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { ConfigProvider, theme } from 'antd';
+import { ConfigProvider, theme, App as AntdApp } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { AppProvider, useAppState } from './contexts/AppContext';
 import { WebSocketProvider, useWebSocket } from './contexts/WebSocketContext';
-import { TerminalProvider } from './contexts/TerminalContext';
+import { TerminalProvider, useTerminal } from './contexts/TerminalContext';
 import { Sidebar } from './components/organisms/Sidebar/Sidebar';
 import { Header } from './components/organisms/Header/Header';
 import { ReconnectModal } from './components/organisms/ReconnectModal/ReconnectModal';
 import { ChangelogModal } from './components/organisms/ChangelogModal/ChangelogModal';
-import { UpdateModal } from './components/organisms/UpdateModal/UpdateModal';
 import { LoginPage } from './pages/LoginPage/LoginPage';
 import { DashboardPage } from './pages/DashboardPage/DashboardPage';
 import { BridgePage } from './pages/BridgePage/BridgePage';
@@ -17,6 +16,7 @@ import { NetworkPage } from './pages/NetworkPage/NetworkPage';
 import { FirewallPage } from './pages/FirewallPage/FirewallPage';
 import { RoutePage } from './pages/RoutePage/RoutePage';
 import { LogPage } from './pages/LogPage/LogPage';
+import { FilePage } from './pages/FilePage/FilePage';
 import { SystemPage } from './pages/SystemPage/SystemPage';
 import { RebootPage } from './pages/RebootPage/RebootPage';
 import { TerminalPage } from './pages/TerminalPage/TerminalPage';
@@ -35,11 +35,10 @@ const defaultRouterInfo = {
 const AppContent: React.FC = () => {
   const { router, isLoggedIn, logout, setRouter } = useAppState();
   const { setCurrentPage, deviceOffline, offlineReason, forceReturnToLogin, handleReconnectSuccess } = useWebSocket();
+  const { disconnectTerminal } = useTerminal();
   const [activeNav, setActiveNav] = useState('dashboard');
   const [networkTargetTab, setNetworkTargetTab] = useState<string | null>(null);
   const [changelogVisible, setChangelogVisible] = useState(false);
-  const [updateVisible, setUpdateVisible] = useState(false);
-  const [updateInfo, setUpdateInfo] = useState({ currentVersion: '', latestVersion: '', changelog: '', downloadUrl: '' });
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -70,25 +69,6 @@ const AppContent: React.FC = () => {
     }
   }, [isLoggedIn]);
 
-  useEffect(() => {
-    const checkForUpdate = async () => {
-      try {
-        const res = await fetch('/api/check-update');
-        const data = await res.json();
-        if (data.has_update) {
-          setUpdateInfo({
-            currentVersion: data.current_version || '',
-            latestVersion: data.latest_version || '',
-            changelog: data.changelog || '',
-            downloadUrl: data.download_url || '',
-          });
-          setUpdateVisible(true);
-        }
-      } catch (_) {}
-    };
-    checkForUpdate();
-  }, []);
-
   const handleNavigate = (nav: string) => {
     setActiveNav(nav);
     if (nav !== 'network') {
@@ -109,6 +89,7 @@ const AppContent: React.FC = () => {
       case 'firewall': return <FirewallPage />;
       case 'routing': return <RoutePage />;
       case 'logs': return <LogPage />;
+      case 'files': return <FilePage />;
       case 'terminal': return <TerminalPage />;
       case 'reboot': return <RebootPage />;
       default: return <div className={styles.placeholder}><h1>请选择菜单项</h1></div>;
@@ -116,6 +97,7 @@ const AppContent: React.FC = () => {
   };
 
   const handleLogout = async () => {
+    disconnectTerminal();
     if (router?.ipAddress) {
       try {
         await fetch('/api/logout', {
@@ -163,14 +145,6 @@ const AppContent: React.FC = () => {
         visible={changelogVisible}
         onClose={() => setChangelogVisible(false)}
       />
-      <UpdateModal
-        visible={updateVisible}
-        currentVersion={updateInfo.currentVersion}
-        latestVersion={updateInfo.latestVersion}
-        changelog={updateInfo.changelog}
-        downloadUrl={updateInfo.downloadUrl}
-        onClose={() => setUpdateVisible(false)}
-      />
     </div>
   );
 };
@@ -179,10 +153,18 @@ const AppWithWebSocket: React.FC = () => {
   const { router } = useAppState();
   return (
     <WebSocketProvider router={router}>
-      <TerminalProvider>
-        <AppContent />
-      </TerminalProvider>
+      <AppWithTerminal />
     </WebSocketProvider>
+  );
+};
+
+const AppWithTerminal: React.FC = () => {
+  const { router } = useAppState();
+  const { deviceOffline } = useWebSocket();
+  return (
+    <TerminalProvider router={router} deviceOffline={deviceOffline}>
+      <AppContent />
+    </TerminalProvider>
   );
 };
 
@@ -212,7 +194,9 @@ const App: React.FC = () => {
       }}
     >
       <AppProvider>
-        <AppWithWebSocket />
+        <AntdApp>
+          <AppWithWebSocket />
+        </AntdApp>
       </AppProvider>
     </ConfigProvider>
   );

@@ -41,6 +41,14 @@
   border-radius: 4px;
 }
 
+.connectingBadge {
+  font-size: 12px;
+  color: #dcdcaa;
+  padding: 2px 8px;
+  background: rgba(220, 220, 170, 0.1);
+  border-radius: 4px;
+}
+
 .headerRight {
   display: flex;
   align-items: center;

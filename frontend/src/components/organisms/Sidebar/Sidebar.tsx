@@ -8,6 +8,7 @@ import {
   SafetyOutlined,
   ShareAltOutlined,
   FileTextOutlined,
+  FolderOutlined,
   SettingOutlined,
   ClusterOutlined,
   LogoutOutlined,
@@ -25,6 +26,7 @@ const MENU_ITEMS = [
   { key: 'firewall', icon: <SafetyOutlined />, label: '防火墙' },
   { key: 'routing', icon: <ShareAltOutlined />, label: '路由' },
   { key: 'logs', icon: <FileTextOutlined />, label: 'Logs' },
+  { key: 'files', icon: <FolderOutlined />, label: '文件' },
   { key: 'terminal', icon: <CodeOutlined />, label: 'New Terminal' },
   {
     key: 'system', icon: <SettingOutlined />, label: '系统',

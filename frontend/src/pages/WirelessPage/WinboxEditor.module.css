@@ -182,3 +182,13 @@
   color: var(--color-text-primary);
   font-weight: 500;
 }
+
+.hideSpinner::-webkit-inner-spin-button,
+.hideSpinner::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.hideSpinner {
+  -moz-appearance: textfield;
+}
