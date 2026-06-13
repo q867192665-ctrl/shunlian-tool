@@ -12,6 +12,7 @@ import {
   SearchOutlined,
   StopOutlined,
   PlusOutlined,
+  LinkOutlined,
 } from '@ant-design/icons';
 import { useAppState } from '../../contexts/AppContext';
 import { useWebSocket } from '../../contexts/WebSocketContext';
@@ -73,6 +74,7 @@ interface ScanResult {
 
 interface ScanInterface {
   name: string;
+  id: string;
   frequency: string;
   band: string;
   running: boolean;
@@ -100,6 +102,7 @@ export const WirelessPage: React.FC = () => {
   const [scanModalVisible, setScanModalVisible] = useState(false);
   const [scanInterfaces, setScanInterfaces] = useState<ScanInterface[]>([]);
   const [selectedScanInterface, setSelectedScanInterface] = useState<string>('');
+  const [selectedScanInterfaceName, setSelectedScanInterfaceName] = useState<string>('');
   const [scanBackground, setScanBackground] = useState(false);
   const [scanScanning, setScanScanning] = useState(false);
   const [scanResults, setScanResults] = useState<Record<string, ScanResult>>({});
@@ -107,6 +110,12 @@ export const WirelessPage: React.FC = () => {
   const [scanSortDirection, setScanSortDirection] = useState<'asc' | 'desc'>('desc');
   const scanWsRef = useRef<WebSocket | null>(null);
   const scanResultTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  
+  // 右键菜单相关状态
+  const [contextMenuVisible, setContextMenuVisible] = useState(false);
+  const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
+  const [selectedScanResult, setSelectedScanResult] = useState<ScanResult | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   // 加密配置相关状态
   const [securityAddModalVisible, setSecurityAddModalVisible] = useState(false);
@@ -539,7 +548,11 @@ export const WirelessPage: React.FC = () => {
           const ifaces: ScanInterface[] = data.interfaces || [];
           setScanInterfaces(ifaces);
           const firstRunning = ifaces.find((i: ScanInterface) => i.running);
-          setSelectedScanInterface(firstRunning?.name || ifaces[0]?.name || '');
+          const selected = firstRunning || ifaces[0];
+          if (selected) {
+            setSelectedScanInterface(selected.id || selected.name);
+            setSelectedScanInterfaceName(selected.name);
+          }
           if (!closed) { ws.close(); closed = true; }
         } else if (data.type === 'error') {
           antMessage.error(data.message || '获取无线接口列表失败');
@@ -657,6 +670,7 @@ export const WirelessPage: React.FC = () => {
     setScanResults({});
     setScanInterfaces([]);
     setSelectedScanInterface('');
+    setSelectedScanInterfaceName('');
   }, [stopScan]);
 
   const sortScanResults = useCallback((field: keyof ScanResult) => {
@@ -680,6 +694,56 @@ export const WirelessPage: React.FC = () => {
     const ghz5: Record<number, number> = { 5180:36,5200:40,5220:44,5240:48,5260:52,5280:56,5300:60,5320:64,5500:100,5520:104,5540:108,5560:112,5580:116,5600:120,5620:124,5640:128,5660:132,5680:136,5700:140,5720:144,5745:149,5765:153,5785:157,5805:161,5825:165 };
     if (ghz5[f]) return `${f}（${ghz5[f]}）`;
     return freq;
+  };
+
+  // 干扰扫描右键菜单
+  const handleScanRowContextMenu = (e: React.MouseEvent, item: ScanResult) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedScanResult(item);
+    setContextMenuPosition({ x: e.clientX, y: e.clientY });
+    setContextMenuVisible(true);
+  };
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (contextMenuVisible && contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setContextMenuVisible(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [contextMenuVisible]);
+
+  const handleConnectFromScan = async (item: ScanResult) => {
+    setContextMenuVisible(false);
+    if (!routerIp) {
+      antMessage.error('设备 IP 不可用');
+      return;
+    }
+    try {
+      const resp = await fetch('/api/wireless-interface/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ip: routerIp,
+          interface_id: selectedScanInterface,
+          ssid: item.ssid,
+          mode: 'station',
+          wireless_protocol: '802.11',
+        }),
+      });
+      const data = await resp.json();
+      if (data.success) {
+        antMessage.success(`已连接到 ${item.ssid}`);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        await fetchAllData();
+      } else {
+        antMessage.error(translateMikrotikError(data.message));
+      }
+    } catch (err) {
+      antMessage.error('连接失败');
+    }
   };
 
   const getSortedScanResults = useCallback((): ScanResult[] => {
@@ -748,6 +812,18 @@ export const WirelessPage: React.FC = () => {
     if (msg.includes('in use') || msg.includes('referenced')) return '该配置正在使用中，无法删除';
     if (msg.includes('invalid')) return '参数无效';
     return msg;
+  };
+
+  const formatWirelessMode = (mode: string): string => {
+    const modeMap: Record<string, string> = {
+      'ap-bridge': 'AP（点对多点）',
+      'bridge': 'PTP（点对点）',
+      'station': 'Station（标准三层）',
+      'station-bridge': 'Station（二层）',
+      'station-pseudobridge': 'Station（对接）',
+      'station-wds': 'Station（WDS）',
+    };
+    return modeMap[mode] || mode;
   };
 
   const handleAddSecurityProfile = async () => {
@@ -869,42 +945,31 @@ export const WirelessPage: React.FC = () => {
     });
   };
 
-  const handleToggleSecurityProfile = (profile: SecurityProfile, enable: boolean) => {
+  const handleToggleSecurityProfile = async (profile: SecurityProfile, enable: boolean) => {
     const mode = enable ? 'dynamic-keys' : 'none';
     const action = enable ? '启用' : '禁用';
-    Modal.confirm({
-      title: `确认${action}`,
-      content: enable
-        ? `确定要启用加密配置 "${profile.name}" 吗？`
-        : `确定要禁用加密配置 "${profile.name}" 吗？禁用后无线网络将不加密。`,
-      okText: action,
-      okType: enable ? 'primary' : 'danger',
-      cancelText: '取消',
-      onOk: async () => {
-        try {
-          const resp = await fetch('/api/security-profile/set-mode', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              ip: routerIp,
-              username: router?.username || 'admin',
-              password: router?.password || '',
-              name: profile.name,
-              mode,
-            }),
-          });
-          const result = await resp.json();
-          if (result.success) {
-            antMessage.success(`${action}成功`);
-            fetchAllData();
-          } else {
-            antMessage.error(translateMikrotikError(result.message));
-          }
-        } catch (err) {
-          antMessage.error(`${action}失败`);
-        }
-      },
-    });
+    try {
+      const resp = await fetch('/api/security-profile/set-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ip: routerIp,
+          username: router?.username || 'admin',
+          password: router?.password || '',
+          name: profile.name,
+          mode,
+        }),
+      });
+      const result = await resp.json();
+      if (result.success) {
+        antMessage.success(`${action}成功`);
+        fetchAllData();
+      } else {
+        antMessage.error(translateMikrotikError(result.message));
+      }
+    } catch (err) {
+      antMessage.error(`${action}失败`);
+    }
   };
 
   const openEditSecurityModal = (profile: SecurityProfile) => {
@@ -1085,7 +1150,7 @@ export const WirelessPage: React.FC = () => {
                     <div className={styles.tableCellCenter}>
                       {iface.mode ? (
                         <span className={`${styles.badge} ${styles.badgeInfo}`}>
-                          {iface.mode}
+                          {formatWirelessMode(iface.mode)}
                         </span>
                       ) : '—'}
                     </div>
@@ -1168,7 +1233,7 @@ export const WirelessPage: React.FC = () => {
                       <div className={styles.tableCellCenter}>
                         {iface.mode ? (
                           <span className={`${styles.badge} ${styles.badgeInfo}`}>
-                            {iface.mode}
+                            {formatWirelessMode(iface.mode)}
                           </span>
                         ) : '—'}
                       </div>
@@ -1246,7 +1311,7 @@ export const WirelessPage: React.FC = () => {
                       <div className={styles.tableCellCenter}>
                         {iface.mode ? (
                           <span className={`${styles.badge} ${styles.badgeInfo}`}>
-                            {iface.mode}
+                            {formatWirelessMode(iface.mode)}
                           </span>
                         ) : '—'}
                       </div>
@@ -1767,8 +1832,12 @@ export const WirelessPage: React.FC = () => {
           <div className={styles.scanControlRow}>
             <label className={styles.scanLabel}>扫描接口</label>
             <Select
-              value={selectedScanInterface || undefined}
-              onChange={setSelectedScanInterface}
+              value={selectedScanInterfaceName || undefined}
+              onChange={(val) => {
+                setSelectedScanInterfaceName(val);
+                const iface = scanInterfaces.find(i => i.name === val);
+                if (iface) setSelectedScanInterface(iface.id || iface.name);
+              }}
               style={{ width: 200 }}
               placeholder="选择接口"
               disabled={scanScanning}
@@ -1839,7 +1908,7 @@ export const WirelessPage: React.FC = () => {
                 </div>
               </div>
               {getSortedScanResults().map(item => (
-                <div key={item.address} className={styles.scanTableRow}>
+                <div key={item.address} className={styles.scanTableRow} onContextMenu={(e) => handleScanRowContextMenu(e, item)}>
                   <div className={styles.scanTableCell}>
                     <span
                       className={`${styles.monospace} ${styles.copyable}`}
@@ -1862,7 +1931,7 @@ export const WirelessPage: React.FC = () => {
                     <span className={styles.monospace}>{item.radio_name}</span>
                   </div>
                   <div className={styles.scanTableCell}>
-                    <span className={styles.monospace}>{freqToChannel(item.channel)}</span>
+                    <span className={styles.monospace}>{item.channel || '—'}</span>
                   </div>
                   <div className={styles.scanTableCell}>
                     <span className={styles.monospace}>{item.signal_strength}</span>
@@ -1884,6 +1953,23 @@ export const WirelessPage: React.FC = () => {
           </div>
         )}
       </Modal>
+
+      {/* 干扰扫描右键菜单 */}
+      {contextMenuVisible && selectedScanResult && (
+        <div
+          ref={contextMenuRef}
+          className={styles.contextMenu}
+          style={{ left: contextMenuPosition.x, top: contextMenuPosition.y }}
+        >
+          <div
+            className={styles.contextMenuItem}
+            onClick={() => handleConnectFromScan(selectedScanResult)}
+          >
+            <LinkOutlined />
+            <span>连接</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

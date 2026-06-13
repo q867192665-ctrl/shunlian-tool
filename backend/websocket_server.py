@@ -2867,6 +2867,7 @@ async def handle_get_wireless_interfaces_list(websocket: WebSocketConn, device_i
                 
                 if iface and iface.get('name'):
                     wireless_interfaces.append({
+                        'id': iface.get('.id', ''),
                         'name': iface.get('name'),
                         'frequency': iface.get('frequency', '--'),
                         'band': iface.get('band', '--'),

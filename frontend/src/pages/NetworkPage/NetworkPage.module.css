@@ -91,6 +91,7 @@
   justify-content: center;
   background: var(--color-bg-tertiary);
   border-radius: var(--radius-md);
+  color: var(--color-accent-primary);
 }
 
 .summaryContent {
@@ -1054,4 +1055,31 @@
   font-weight: 600;
   color: var(--color-text-secondary);
   flex-shrink: 0;
+}
+
+/* 亮色主题覆盖 - Argon 风格 */
+:global([data-theme="light"]) .saveButton:hover:not(:disabled) {
+  background: #2dce89;
+  box-shadow: 0 2px 8px rgba(45, 206, 137, 0.3);
+}
+:global([data-theme="light"]) .confirmButton:hover {
+  background: #5e72e4;
+  box-shadow: 0 4px 12px rgba(94, 114, 228, 0.3);
+}
+:global([data-theme="light"]) .copyable:active {
+  color: #4c5fd7;
+}
+:global([data-theme="light"]) .badgeSuccess {
+  background: rgba(45, 206, 137, 0.15);
+  border-color: rgba(45, 206, 137, 0.3);
+}
+:global([data-theme="light"]) .badgeWarning {
+  background: rgba(251, 99, 64, 0.15);
+  color: #fb6340;
+  border-color: rgba(251, 99, 64, 0.3);
+}
+:global([data-theme="light"]) .badgeInfo {
+  background: rgba(17, 205, 239, 0.15);
+  color: #11cdef;
+  border-color: rgba(17, 205, 239, 0.3);
 }

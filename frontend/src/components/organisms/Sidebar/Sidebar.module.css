@@ -244,3 +244,18 @@
 .logoutBtn:hover {
   background-color: rgba(239, 68, 68, 0.25);
 }
+
+/* 亮色主题覆盖 - AdminLTE 风格 */
+:global([data-theme="light"]) .routerTable tbody tr:hover {
+  background-color: rgba(13, 110, 253, 0.05);
+}
+:global([data-theme="light"]) .routerLabel {
+  background-color: rgba(13, 110, 253, 0.08);
+}
+:global([data-theme="light"]) .logoutBtn {
+  background-color: rgba(220, 53, 69, 0.1);
+  border: 1px solid rgba(220, 53, 69, 0.4);
+}
+:global([data-theme="light"]) .logoutBtn:hover {
+  background-color: rgba(220, 53, 69, 0.15);
+}

@@ -35,3 +35,25 @@
 .rowError:hover td { background: rgba(231, 76, 60, 0.1) !important; }
 .rowWarning { background: rgba(241, 196, 15, 0.05); }
 .rowWarning:hover td { background: rgba(241, 196, 15, 0.1) !important; }
+
+/* 亮色主题覆盖 - Argon 风格 */
+:global([data-theme="light"]) .topicError {
+  background: rgba(245, 54, 92, 0.1);
+  color: #f5365c;
+}
+:global([data-theme="light"]) .topicWarning {
+  background: rgba(251, 99, 64, 0.1);
+  color: #fb6340;
+}
+:global([data-theme="light"]) .topicInfo {
+  background: rgba(17, 205, 239, 0.1);
+  color: #11cdef;
+}
+:global([data-theme="light"]) .topicDebug {
+  background: rgba(136, 152, 170, 0.1);
+  color: #8898aa;
+}
+:global([data-theme="light"]) .topicDefault {
+  background: rgba(136, 152, 170, 0.08);
+  color: #8898aa;
+}

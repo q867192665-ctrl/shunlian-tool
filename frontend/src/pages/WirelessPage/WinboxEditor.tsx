@@ -1037,12 +1037,12 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
               onChange={(value) => updateField('mode', value)}
               style={{ width: '100%' }}
             >
-              <Option value="ap-bridge">AP 桥接</Option>
-              <Option value="bridge">桥接</Option>
-              <Option value="station">站点</Option>
-              <Option value="station-bridge">站点桥接</Option>
-              <Option value="station-pseudobridge">站点伪桥接</Option>
-              <Option value="station-wds">站点 WDS</Option>
+              <Option value="ap-bridge">AP（点对多点）</Option>
+              <Option value="bridge">PTP（点对点）</Option>
+              <Option value="station">Station（标准三层）</Option>
+              <Option value="station-bridge">Station（二层）</Option>
+              <Option value="station-pseudobridge">Station（对接）</Option>
+              <Option value="station-wds">Station（WDS）</Option>
             </Select>
           </div>
           <div className={styles.formGroup}>

@@ -5,7 +5,6 @@ import {
   ApiOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
-  ReloadOutlined,
   LinkOutlined,
   CopyOutlined,
   DesktopOutlined,
@@ -72,6 +71,29 @@ const translateMikrotikError = (msg: string): string => {
   if (msg.includes('must be')) return '参数格式错误';
   if (msg.includes('no such')) return '指定项不存在';
   return msg;
+};
+
+/** 将 MikroTik 返回的优先级值去除 0x 前缀（如有） */
+const formatPriority = (val: string | undefined): string => {
+  if (!val) return '';
+  if (val.startsWith('0x') || val.startsWith('0X')) {
+    return val.slice(2);
+  }
+  return val;
+};
+
+/** 将用户输入的优先级值添加 0x 前缀后发送给 MikroTik */
+const toMikrotikPriority = (val: string): string => {
+  if (!val) return '';
+  if (val.startsWith('0x') || val.startsWith('0X')) return val;
+  return '0x' + val;
+};
+
+/** 规范化 VLAN 过滤值：将 true/false 转为 yes/no */
+const normalizeVlanFiltering = (val: string | undefined): string => {
+  if (val === 'true') return 'yes';
+  if (val === 'false') return 'no';
+  return val || 'no';
 };
 
 export const BridgePage: React.FC = () => {
@@ -175,7 +197,7 @@ export const BridgePage: React.FC = () => {
       if (bridgeForm['protocol-mode']) params['protocol-mode'] = bridgeForm['protocol-mode'];
       if (bridgeForm['vlan-filtering']) params['vlan-filtering'] = bridgeForm['vlan-filtering'];
       if (bridgeForm.arp) params['arp'] = bridgeForm.arp;
-      if (bridgeForm.priority) params['priority'] = bridgeForm.priority;
+      if (bridgeForm.priority) params['priority'] = toMikrotikPriority(bridgeForm.priority);
       if (bridgeForm['ageing-time']) params['ageing-time'] = bridgeForm['ageing-time'];
       if (bridgeForm.comment) params['comment'] = bridgeForm.comment;
 
@@ -209,9 +231,9 @@ export const BridgePage: React.FC = () => {
     setBridgeForm({
       name: bridge.name || '',
       'protocol-mode': bridge['protocol-mode'] || 'stp',
-      'vlan-filtering': bridge['vlan-filtering'] || 'no',
+      'vlan-filtering': normalizeVlanFiltering(bridge['vlan-filtering']),
       'arp': bridge.arp || 'enabled',
-      'priority': bridge.priority || '32768',
+      'priority': formatPriority(bridge.priority) || '32768',
       'ageing-time': bridge['ageing-time'] || '',
       comment: bridge.comment || '',
     });
@@ -233,9 +255,9 @@ export const BridgePage: React.FC = () => {
       // 对比变更字段
       if (bridgeForm.name !== editingBridge.name) params['name'] = bridgeForm.name.trim();
       if (bridgeForm['protocol-mode'] !== (editingBridge['protocol-mode'] || 'stp')) params['protocol-mode'] = bridgeForm['protocol-mode'];
-      if (bridgeForm['vlan-filtering'] !== (editingBridge['vlan-filtering'] || 'no')) params['vlan-filtering'] = bridgeForm['vlan-filtering'];
+      if (bridgeForm['vlan-filtering'] !== normalizeVlanFiltering(editingBridge['vlan-filtering'])) params['vlan-filtering'] = bridgeForm['vlan-filtering'];
       if (bridgeForm.arp !== (editingBridge.arp || 'enabled')) params['arp'] = bridgeForm.arp;
-      if (bridgeForm.priority !== (editingBridge.priority || '32768')) params['priority'] = bridgeForm.priority;
+      if (bridgeForm.priority !== formatPriority(editingBridge.priority || '32768')) params['priority'] = toMikrotikPriority(bridgeForm.priority);
       if (bridgeForm['ageing-time'] !== (editingBridge['ageing-time'] || '')) params['ageing-time'] = bridgeForm['ageing-time'];
       if (bridgeForm.comment !== (editingBridge.comment || '')) params['comment'] = bridgeForm.comment;
 
@@ -304,7 +326,7 @@ export const BridgePage: React.FC = () => {
       const params: Record<string, string> = {};
       if (portForm['pvid']) params['pvid'] = portForm['pvid'];
       if (portForm['path-cost']) params['path-cost'] = portForm['path-cost'];
-      if (portForm.priority) params['priority'] = portForm.priority;
+      if (portForm.priority) params['priority'] = toMikrotikPriority(portForm.priority);
       if (portForm.edge) params['edge'] = portForm.edge;
       if (portForm.comment) params['comment'] = portForm.comment;
 
@@ -341,7 +363,7 @@ export const BridgePage: React.FC = () => {
       bridge: port.bridge || '',
       'pvid': port.pvid || '1',
       'path-cost': port['path-cost'] || '',
-      priority: port.priority || '',
+      priority: formatPriority(port.priority) || '',
       edge: port.edge || 'no',
       comment: port.comment || '',
     });
@@ -359,7 +381,7 @@ export const BridgePage: React.FC = () => {
       if (portForm.bridge !== (editingPort.bridge || '')) params['bridge'] = portForm.bridge.trim();
       if (portForm['pvid'] !== (editingPort.pvid || '1')) params['pvid'] = portForm['pvid'];
       if (portForm['path-cost'] !== (editingPort['path-cost'] || '')) params['path-cost'] = portForm['path-cost'];
-      if (portForm.priority !== (editingPort.priority || '')) params['priority'] = portForm.priority;
+      if (portForm.priority !== formatPriority(editingPort.priority || '')) params['priority'] = toMikrotikPriority(portForm.priority);
       if (portForm.edge !== (editingPort.edge || 'no')) params['edge'] = portForm.edge;
       if (portForm.comment !== (editingPort.comment || '')) params['comment'] = portForm.comment;
 
@@ -525,7 +547,7 @@ export const BridgePage: React.FC = () => {
                       ) : '—'}
                     </div>
                     <div className={styles.tableCellCenter}>
-                      {bridge['vlan-filtering'] === 'true' ? (
+                      {bridge['vlan-filtering'] === 'true' || bridge['vlan-filtering'] === 'yes' ? (
                         <span className={`${styles.badge} ${styles.badgeSuccess}`}>
                           启用
                         </span>
@@ -663,7 +685,7 @@ export const BridgePage: React.FC = () => {
                       <span className={styles.monospace}>{port['path-cost'] || '—'}</span>
                     </div>
                     <div className={styles.tableCellCenter}>
-                      <span className={styles.monospace}>{port.priority || '—'}</span>
+                      <span className={styles.monospace}>{formatPriority(port.priority) || '—'}</span>
                     </div>
                     <div className={styles.tableCellCenter}>
                       {port.edge === 'true' ? (
@@ -819,14 +841,6 @@ export const BridgePage: React.FC = () => {
         <div className={styles.headerContent}>
           <h1 className={styles.title}>桥接口</h1>
           <p className={styles.subtitle}>管理桥接口、桥接端口和主机表</p>
-        </div>
-        <div className={styles.headerActions}>
-          <button className={styles.refreshButton} onClick={() => {
-            startBridgePolling();
-          }}>
-            <ReloadOutlined className={styles.refreshIcon} />
-            刷新
-          </button>
         </div>
       </div>
 

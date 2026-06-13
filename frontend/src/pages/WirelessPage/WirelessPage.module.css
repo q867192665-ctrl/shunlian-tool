@@ -96,6 +96,7 @@
   justify-content: center;
   background: var(--color-bg-tertiary);
   border-radius: var(--radius-md);
+  color: var(--color-accent-primary);
 }
 
 .summaryContent {
@@ -714,16 +715,49 @@
 
 .scanTableRow:hover {
   background: var(--color-bg-tertiary);
+  cursor: context-menu;
+}
+
+/* 右键菜单 */
+.contextMenu {
+  position: fixed;
+  z-index: 10000;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-xs) 0;
+  min-width: 120px;
+}
+
+.contextMenuItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  font-size: 13px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.contextMenuItem:hover {
+  background: var(--color-accent-primary);
+  color: #fff;
 }
 
 .scanTableCell {
   display: flex;
   align-items: center;
+  justify-content: center;
   font-size: 13px;
   color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-all;
+  white-space: normal;
+  line-height: 1.4;
+  min-height: 28px;
 }
 
 .scanTableHeader .scanTableCell {
@@ -738,4 +772,114 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+}
+
+/* 亮色主题覆盖 - Argon 风格 */
+:global([data-theme="light"]) .summaryCard {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+:global([data-theme="light"]) .table {
+  background: var(--color-bg-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+:global([data-theme="light"]) .weakSignalRow {
+  background: rgba(251, 99, 64, 0.12);
+  border-left-color: #fb6340;
+}
+:global([data-theme="light"]) .weakSignalRow:hover {
+  background: rgba(251, 99, 64, 0.18);
+}
+:global([data-theme="light"]) .copyable:active {
+  color: #4c5fd7;
+}
+:global([data-theme="light"]) .badgeSuccess {
+  background: rgba(45, 206, 137, 0.15);
+  border-color: rgba(45, 206, 137, 0.3);
+}
+:global([data-theme="light"]) .badgeWarning {
+  background: rgba(251, 99, 64, 0.15);
+  color: #fb6340;
+  border-color: rgba(251, 99, 64, 0.3);
+}
+:global([data-theme="light"]) .badgeInfo {
+  background: rgba(17, 205, 239, 0.15);
+  color: #11cdef;
+  border-color: rgba(17, 205, 239, 0.3);
+}
+:global([data-theme="light"]) .signalBadge {
+  background: rgba(94, 114, 228, 0.1);
+  border-color: rgba(94, 114, 228, 0.2);
+  color: #5e72e4;
+}
+:global([data-theme="light"]) .strongSignal {
+  background: rgba(45, 206, 137, 0.15);
+  border-color: rgba(45, 206, 137, 0.3);
+  color: #2dce89;
+}
+:global([data-theme="light"]) .weakSignal {
+  background: rgba(251, 99, 64, 0.15);
+  border-color: rgba(251, 99, 64, 0.3);
+  color: #fb6340;
+}
+:global([data-theme="light"]) .deleteButton:hover {
+  background: rgba(245, 54, 92, 0.1);
+  border-color: #f5365c;
+  color: #f5365c;
+}
+:global([data-theme="light"]) .editButton:hover {
+  background: rgba(94, 114, 228, 0.1);
+  border-color: #5e72e4;
+  color: #5e72e4;
+}
+:global([data-theme="light"]) .modalConfirmBtn:hover {
+  background: #4c5fd7;
+  box-shadow: 0 4px 12px rgba(94, 114, 228, 0.3);
+}
+:global([data-theme="light"]) .retryButton:hover {
+  background: #4c5fd7;
+  box-shadow: 0 4px 12px rgba(94, 114, 228, 0.3);
+}
+:global([data-theme="light"]) .enableBtn {
+  border-color: rgba(45, 206, 137, 0.3);
+  color: #2dce89;
+  background: rgba(45, 206, 137, 0.1);
+}
+:global([data-theme="light"]) .enableBtn:hover {
+  background: rgba(45, 206, 137, 0.2);
+  border-color: #2dce89;
+  color: #2dce89;
+}
+:global([data-theme="light"]) .disableBtn {
+  border-color: rgba(245, 54, 92, 0.3);
+  color: #f5365c;
+  background: rgba(245, 54, 92, 0.1);
+}
+:global([data-theme="light"]) .disableBtn:hover {
+  background: rgba(245, 54, 92, 0.2);
+  border-color: #f5365c;
+  color: #f5365c;
+}
+:global([data-theme="light"]) .scanStartBtn {
+  background: rgba(45, 206, 137, 0.15);
+  border-color: rgba(45, 206, 137, 0.3);
+  color: #2dce89;
+}
+:global([data-theme="light"]) .scanStartBtn:hover:not(:disabled) {
+  background: rgba(45, 206, 137, 0.25);
+  border-color: #2dce89;
+}
+:global([data-theme="light"]) .scanStopBtn {
+  background: rgba(245, 54, 92, 0.1);
+  border-color: rgba(245, 54, 92, 0.3);
+  color: #f5365c;
+}
+:global([data-theme="light"]) .scanStopBtn:hover {
+  background: rgba(245, 54, 92, 0.2);
+  border-color: #f5365c;
+}
+:global([data-theme="light"]) .scanTable {
+  background: var(--color-bg-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
 }

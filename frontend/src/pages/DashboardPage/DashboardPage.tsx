@@ -275,8 +275,10 @@ export const DashboardPage: React.FC = () => {
   return (
     <div className={styles.container}>
       <div className={styles.header}>
-        <h1 className={styles.title}>仪表盘</h1>
-        <p className={styles.subtitle}>路由器实时统计与监控</p>
+        <div>
+          <h1 className={styles.title}>仪表盘</h1>
+          <p className={styles.subtitle}>路由器实时统计与监控</p>
+        </div>
       </div>
 
       <div className={styles.statsGrid}>

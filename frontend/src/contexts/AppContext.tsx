@@ -1,9 +1,13 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import type { RouterInfo } from '../types/router';
 
+type Theme = 'light' | 'dark';
+
 interface AppState {
   router: RouterInfo | null;
   isLoggedIn: boolean;
+  theme: Theme;
+  setTheme: (theme: Theme) => void;
   setRouter: (info: RouterInfo | null) => void;
   setLoggedIn: (value: boolean) => void;
   logout: () => void;
@@ -13,13 +17,15 @@ interface AppState {
 const AppContext = createContext<AppState>({
   router: null,
   isLoggedIn: false,
+  theme: 'dark',
+  setTheme: () => {},
   setRouter: () => {},
   setLoggedIn: () => {},
   logout: () => {},
   forceLogout: async () => {},
 });
 
-export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AppProvider: React.FC<{ children: React.ReactNode; theme: Theme; setTheme: (theme: Theme) => void }> = ({ children, theme, setTheme }) => {
   const [router, setRouter] = useState<RouterInfo | null>(null);
   const [isLoggedIn, setLoggedIn] = useState(false);
 
@@ -48,7 +54,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [router?.ipAddress]);
 
   return (
-    <AppContext.Provider value={{ router, isLoggedIn, setRouter, setLoggedIn, logout, forceLogout }}>
+    <AppContext.Provider value={{ router, isLoggedIn, theme, setTheme, setRouter, setLoggedIn, logout, forceLogout }}>
       {children}
     </AppContext.Provider>
   );

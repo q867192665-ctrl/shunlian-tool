@@ -166,3 +166,17 @@
 .btnPrimary:hover {
   opacity: 0.9;
 }
+
+/* 亮色主题覆盖 - Argon 风格 */
+:global([data-theme="light"]) .overlay {
+  background: rgba(0, 0, 0, 0.4);
+}
+:global([data-theme="light"]) .modal {
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.15);
+}
+:global([data-theme="light"]) .latestVersion {
+  background: rgba(94, 114, 228, 0.1);
+}
+:global([data-theme="light"]) .btnPrimary {
+  color: #fff;
+}

@@ -21,7 +21,7 @@ import styles from './Sidebar.module.css';
 const MENU_ITEMS = [
   { key: 'dashboard', icon: <DashboardOutlined />, label: '仪表盘' },
   { key: 'bridge', icon: <LinkOutlined />, label: '桥接口' },
-  { key: 'wireless', icon: <WifiOutlined />, label: 'Wireless' },
+  { key: 'wireless', icon: <WifiOutlined />, label: '无线' },
   { key: 'network', icon: <GlobalOutlined />, label: '网络' },
   { key: 'firewall', icon: <SafetyOutlined />, label: '防火墙' },
   { key: 'routing', icon: <ShareAltOutlined />, label: '路由' },

@@ -166,3 +166,28 @@
   color: var(--color-text-primary);
   font-weight: 600;
 }
+
+/* 亮色主题覆盖 - Argon 风格 */
+:global([data-theme="light"]) .overlay {
+  background: rgba(0, 0, 0, 0.4);
+}
+:global([data-theme="light"]) .modal {
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.15);
+}
+:global([data-theme="light"]) .iconWrapper {
+  background: rgba(245, 54, 92, 0.1);
+  border: 2px solid rgba(245, 54, 92, 0.3);
+}
+:global([data-theme="light"]) .reconnectIcon {
+  color: #5e72e4;
+}
+:global([data-theme="light"]) .successWrapper {
+  background: rgba(45, 206, 137, 0.1);
+  border-color: rgba(45, 206, 137, 0.3);
+}
+:global([data-theme="light"]) .progressBar {
+  background: var(--color-bg-tertiary);
+}
+:global([data-theme="light"]) .progressFill {
+  background: linear-gradient(90deg, #5e72e4, #7b8de8);
+}

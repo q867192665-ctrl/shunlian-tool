@@ -372,3 +372,26 @@
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* 亮色主题覆盖 - Argon 风格 */
+:global([data-theme="light"]) .retryButton:hover {
+  background: #5e72e4;
+  box-shadow: 0 4px 12px rgba(94, 114, 228, 0.3);
+}
+:global([data-theme="light"]) .copyable:active {
+  color: #4c5fd7;
+}
+:global([data-theme="light"]) .badgeWarning {
+  background: rgba(251, 99, 64, 0.15);
+  color: #fb6340;
+  border-color: rgba(251, 99, 64, 0.3);
+}
+:global([data-theme="light"]) .badgeInfo {
+  background: rgba(17, 205, 239, 0.15);
+  color: #11cdef;
+  border-color: rgba(17, 205, 239, 0.3);
+}
+:global([data-theme="light"]) .table {
+  background: var(--color-bg-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}

@@ -103,7 +103,7 @@
 
 .summaryIcon {
   font-size: 32px;
-  color: var(--color-accent);
+  color: var(--color-accent-primary);
 }
 
 .summaryContent {
@@ -326,9 +326,10 @@
   padding: var(--space-sm) var(--space-md);
   background: var(--color-bg-tertiary);
   border: 1px solid var(--color-border-primary);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--color-text-primary);
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -438,4 +439,40 @@
   .hostsTable .tableCell:nth-child(n + 3) {
     display: none;
   }
+}
+
+/* 亮色主题覆盖 - Argon 风格 */
+:global([data-theme="light"]) .copyable:active {
+  color: #4c5fd7;
+}
+:global([data-theme="light"]) .badgeSuccess {
+  background: rgba(45, 206, 137, 0.15);
+  border-color: rgba(45, 206, 137, 0.3);
+}
+:global([data-theme="light"]) .badgeWarning {
+  background: rgba(251, 99, 64, 0.15);
+  color: #fb6340;
+  border-color: rgba(251, 99, 64, 0.3);
+}
+:global([data-theme="light"]) .badgeInfo {
+  background: rgba(17, 205, 239, 0.15);
+  color: #11cdef;
+  border-color: rgba(17, 205, 239, 0.3);
+}
+:global([data-theme="light"]) .retryButton:hover {
+  background: #5e72e4;
+}
+:global([data-theme="light"]) .deleteButton:hover {
+  background: rgba(245, 54, 92, 0.1);
+  border-color: #f5365c;
+  color: #f5365c;
+}
+:global([data-theme="light"]) .actionButton:hover {
+  background: rgba(94, 114, 228, 0.08);
+  border-color: #5e72e4;
+  color: #5e72e4;
+}
+:global([data-theme="light"]) .table {
+  background: var(--color-bg-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
 }

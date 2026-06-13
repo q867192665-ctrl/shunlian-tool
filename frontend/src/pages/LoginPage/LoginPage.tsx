@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAppState } from '../../contexts/AppContext';
+import { SunOutlined, MoonOutlined, SearchOutlined, SkinOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import { UpdateModal } from '../../components/organisms/UpdateModal/UpdateModal';
 import type { DeviceInfo } from '../../types/api';
 import styles from './LoginPage.module.css';
 
 export const LoginPage: React.FC = () => {
-  const { setRouter, setLoggedIn } = useAppState();
+  const { setRouter, setLoggedIn, theme, setTheme } = useAppState();
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [search, setSearch] = useState('');
   const [ip, setIp] = useState(() => localStorage.getItem('savedIp') || '');
@@ -20,6 +21,8 @@ export const LoginPage: React.FC = () => {
   const [updateVisible, setUpdateVisible] = useState(false);
   const [updateInfo, setUpdateInfo] = useState({ currentVersion: '', latestVersion: '', changelog: '', downloadUrl: '' });
   const [appVersion, setAppVersion] = useState('');
+  const [themeDropdownVisible, setThemeDropdownVisible] = useState(false);
+  const themeDropdownRef = React.useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (rememberPassword) {
@@ -27,6 +30,16 @@ export const LoginPage: React.FC = () => {
       if (savedPwd) setPassword(savedPwd);
     }
   }, [rememberPassword]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (themeDropdownRef.current && !themeDropdownRef.current.contains(e.target as Node)) {
+        setThemeDropdownVisible(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const fetchDevices = useCallback(async () => {
     try {
@@ -254,19 +267,52 @@ export const LoginPage: React.FC = () => {
       </div>
 
       <div className={styles.rightPanel}>
+        <div className={styles.topBar}>
+          <div className={styles.searchWrapper}>
+            <SearchOutlined className={styles.searchIcon} />
+            <input
+              className={styles.searchInput}
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="搜索设备 (IP / 名称 / MAC)..."
+            />
+          </div>
+          <div className={styles.themeDropdown} ref={themeDropdownRef}>
+            <div className={styles.themeBtnWrapper}>
+              <button
+                className={styles.themeIconBtn}
+                onClick={() => setThemeDropdownVisible(!themeDropdownVisible)}
+                title="切换模式"
+              >
+                <SkinOutlined />
+              </button>
+              <span className={styles.themeBtnLabel}>主题</span>
+            </div>
+            {themeDropdownVisible && (
+              <div className={styles.themeDropdownMenu}>
+                <div
+                  className={`${styles.themeDropdownItem} ${theme === 'light' ? styles.themeDropdownItemActive : ''}`}
+                  onClick={() => { setTheme('light'); setThemeDropdownVisible(false); }}
+                >
+                  <SunOutlined />
+                  <span>浅色模式</span>
+                </div>
+                <div
+                  className={`${styles.themeDropdownItem} ${theme === 'dark' ? styles.themeDropdownItemActive : ''}`}
+                  onClick={() => { setTheme('dark'); setThemeDropdownVisible(false); }}
+                >
+                  <MoonOutlined />
+                  <span>深色模式</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className={styles.discoveryHeader}>
           <h2 className={styles.discoveryTitle}>设备发现</h2>
           <span className={styles.deviceCount}>{devices.length} 台设备</span>
-        </div>
-
-        <div className={styles.searchBox}>
-          <input
-            className={styles.searchInput}
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="搜索设备 (IP / 名称 / MAC)..."
-          />
         </div>
 
         <div className={styles.deviceList}>

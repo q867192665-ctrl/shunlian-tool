@@ -824,10 +824,6 @@ export const FirewallPage: React.FC = () => {
           </div>
         </div>
         <div className={styles.headerActions}>
-          <button className={styles.refreshButton} onClick={() => fetchData(false)}>
-            <ReloadOutlined className={styles.refreshIcon} />
-            刷新
-          </button>
           <button className={styles.refreshButton} onClick={handleCopyCurrentTab}>
             <CopyOutlined className={styles.refreshIcon} />
             复制

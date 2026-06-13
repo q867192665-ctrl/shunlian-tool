@@ -4,6 +4,7 @@ import zhCN from 'antd/locale/zh_CN';
 import { AppProvider, useAppState } from './contexts/AppContext';
 import { WebSocketProvider, useWebSocket } from './contexts/WebSocketContext';
 import { TerminalProvider, useTerminal } from './contexts/TerminalContext';
+import { useTheme } from './hooks/useTheme';
 import { Sidebar } from './components/organisms/Sidebar/Sidebar';
 import { Header } from './components/organisms/Header/Header';
 import { ReconnectModal } from './components/organisms/ReconnectModal/ReconnectModal';
@@ -169,31 +170,34 @@ const AppWithTerminal: React.FC = () => {
 };
 
 const App: React.FC = () => {
+  const { theme: themeMode, setTheme: setThemeMode } = useTheme();
+  const isDark = themeMode === 'dark';
+
   return (
     <ConfigProvider
       locale={zhCN}
       theme={{
-        algorithm: theme.darkAlgorithm,
+        algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
         token: {
-          colorPrimary: '#ff6b35',
-          colorBgContainer: '#1a1a1a',
-          colorBgElevated: '#1f1f1f',
-          colorBorder: '#2d2d2d',
-          colorText: '#ffffff',
-          colorTextSecondary: '#a0a0a0',
+          colorPrimary: isDark ? '#ff6b35' : '#5e72e4',
+          colorBgContainer: isDark ? '#1a1a1a' : '#ffffff',
+          colorBgElevated: isDark ? '#1f1f1f' : '#ffffff',
+          colorBorder: isDark ? '#2d2d2d' : '#dee2e6',
+          colorText: isDark ? '#ffffff' : '#32325d',
+          colorTextSecondary: isDark ? '#a0a0a0' : '#525f7f',
           borderRadius: 6,
         },
         components: {
           Popconfirm: {
-            colorBgElevated: '#1a1a1a',
+            colorBgElevated: isDark ? '#1a1a1a' : '#ffffff',
           },
           Popover: {
-            colorBgElevated: '#1a1a1a',
+            colorBgElevated: isDark ? '#1a1a1a' : '#ffffff',
           },
         },
       }}
     >
-      <AppProvider>
+      <AppProvider theme={themeMode} setTheme={setThemeMode}>
         <AntdApp>
           <AppWithWebSocket />
         </AntdApp>

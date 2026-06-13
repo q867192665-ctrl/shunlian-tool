@@ -1250,10 +1250,6 @@ export const NetworkPage: React.FC<NetworkPageProps> = ({ targetTab, onTargetTab
           <h1 className={styles.title}>网络</h1>
           <p className={styles.subtitle}>管理网络接口、IP地址、路由和ARP表</p>
         </div>
-        <button className={styles.refreshButton} onClick={fetchData} disabled={!routerIp}>
-          <ReloadOutlined className={styles.refreshIcon} />
-          刷新
-        </button>
       </div>
 
       <Tabs

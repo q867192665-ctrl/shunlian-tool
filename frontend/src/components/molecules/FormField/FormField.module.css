@@ -2,4 +2,7 @@
 .label { font-size: var(--font-size-xs); color: var(--color-text-primary); font-weight: 500; }
 .required::after { content: ' *'; color: var(--color-accent-primary); }
 .helpText { font-size: var(--font-size-xs); color: var(--color-text-secondary); line-height: var(--line-height-normal); }
-.error { font-size: var(--font-size-xs); color: #ef4444; line-height: var(--line-height-normal); }
+.error { font-size: var(--font-size-xs); color: #f5365c; line-height: var(--line-height-normal); }
+
+/* 亮色主题 - Argon 风格 */
+:global([data-theme="light"]) .error { color: #f5365c; }

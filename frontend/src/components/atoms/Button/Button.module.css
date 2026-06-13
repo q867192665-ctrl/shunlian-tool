@@ -10,9 +10,13 @@
 .button:active { transform: translateY(1px); }
 .button:disabled { opacity: 0.5; cursor: not-allowed; }
 .primary { background-color: var(--color-accent-primary); border-color: var(--color-accent-primary); color: var(--color-text-primary); }
-.primary:hover { background-color: #e55d2e; border-color: #e55d2e; }
+.primary:hover { background-color: #4c5fd7; border-color: #4c5fd7; }
 .secondary { background-color: transparent; border-color: var(--color-border-primary); }
 .small { height: var(--size-button-sm); padding: var(--space-xs) var(--space-md); font-size: var(--font-size-xs); }
 .medium { height: var(--size-input); }
 .large { height: var(--size-button-lg); }
 .iconOnly { width: var(--size-button-sm); height: var(--size-button-sm); padding: 0; }
+
+/* 亮色主题 - Argon 风格 */
+:global([data-theme="light"]) .primary { color: #ffffff; }
+:global([data-theme="light"]) .primary:hover { background-color: #4c5fd7; border-color: #4c5fd7; }
