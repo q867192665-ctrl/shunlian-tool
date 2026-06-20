@@ -28,14 +28,14 @@ if errorlevel 1 (
 )
 
 echo.
-echo [1/5] 转换图标...
+echo [1/4] 转换图标...
 python convert_icon.py
 if errorlevel 1 (
     echo [警告] 图标转换失败，将使用默认图标
 )
 
 echo.
-echo [2/5] 打包后端程序 (shunlian_backend.exe)...
+echo [2/4] 打包后端程序 (shunlian_backend.exe)...
 pyinstaller --noconfirm --onefile --noconsole ^
     --name "shunlian_backend" ^
     --icon "logo.ico" ^
@@ -70,7 +70,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/5] 打包启动器 (ShunLianTool.exe)...
+echo [3/4] 打包启动器 (ShunLianTool.exe)...
 pyinstaller --noconfirm --onefile --noconsole ^
     --name "ShunLianTool" ^
     --icon "logo.ico" ^
@@ -84,28 +84,14 @@ if errorlevel 1 (
 )
 
 echo.
-echo [4/5] 打包进程守护 (shunlian_guardian.exe)...
-pyinstaller --noconfirm --onefile --noconsole ^
-    --name "shunlian_guardian" ^
-    --icon "logo.ico" ^
-    guardian.py
-
-if errorlevel 1 (
-    echo [错误] 进程守护打包失败
-    pause
-    exit /b 1
-)
-
-echo.
-echo [5/5] 整理输出文件...
+echo [4/4] 整理输出文件...
 if not exist "dist\setup_files" mkdir "dist\setup_files"
 copy /Y "dist\shunlian_backend.exe" "dist\setup_files\" >nul
 copy /Y "dist\ShunLianTool.exe" "dist\setup_files\" >nul
-copy /Y "dist\shunlian_guardian.exe" "dist\setup_files\" >nul
 copy /Y "config.yaml" "dist\setup_files\" >nul
 if exist "logo.ico" copy /Y "logo.ico" "dist\setup_files\" >nul
 if exist "Logo.jpg" copy /Y "Logo.jpg" "dist\setup_files\" >nul
-if exist "SLSCtools.exe" copy /Y "SLSCtools.exe" "dist\setup_files\ct_helper.exe" >nul
+if exist "SLSCtools.exe" copy /Y "SLSCtools.exe" "dist\setup_files\slsc_runtime.slr" >nul
 if exist "unlock.py" copy /Y "unlock.py" "dist\setup_files\" >nul
 
 REM 复制 static 目录

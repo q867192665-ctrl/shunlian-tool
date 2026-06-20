@@ -43,3 +43,6 @@ backend/static/
 
 # Inno Setup output
 installer_output/
+
+# Temporary test scripts
+backend/test_*.py

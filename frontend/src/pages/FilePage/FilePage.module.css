@@ -23,7 +23,19 @@
 }
 .actionBtn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.tableContainer { flex: 1; overflow: auto; border: 1px solid var(--color-border-primary); border-radius: var(--radius-md); background: var(--color-bg-primary); }
+.tableContainer {
+  flex: 1; overflow: auto; border: 1px solid var(--color-border-primary); border-radius: var(--radius-md);
+  background: var(--color-bg-primary); position: relative;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+/* 拖拽到容器时的整体高亮 */
+.tableContainer.dragOverContainer {
+  border-color: var(--color-accent-primary);
+  border-style: dashed;
+  border-width: 2px;
+  background: rgba(255, 107, 53, 0.04);
+}
 
 .table { width: 100%; border-collapse: collapse; }
 .table th {
@@ -69,3 +81,64 @@
 
 .emptyState { text-align: center; padding: 60px 20px; color: var(--color-text-secondary); }
 .loadingState { text-align: center; padding: 60px 20px; color: var(--color-text-secondary); }
+
+/* 选中行高亮 */
+.selectedRow td { background: rgba(255, 107, 53, 0.08) !important; }
+
+/* 拖拽到文件夹行时的高亮 */
+.dropTargetRow td {
+  background: rgba(255, 107, 53, 0.12) !important;
+  border-top: 2px solid var(--color-accent-primary) !important;
+  border-bottom: 2px solid var(--color-accent-primary) !important;
+}
+.dropTargetRow td:first-child { border-left: 2px solid var(--color-accent-primary) !important; }
+.dropTargetRow td:last-child { border-right: 2px solid var(--color-accent-primary) !important; }
+
+.dropHint {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--color-accent-primary);
+  font-weight: 400;
+}
+
+/* 拖拽遮罩层 */
+.dragOverlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px 60px;
+  background: rgba(10, 10, 10, 0.85);
+  border: 2px dashed var(--color-accent-primary);
+  border-radius: var(--radius-lg);
+  z-index: 10;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+  animation: dragOverlayFadeIn 0.2s ease;
+}
+
+@keyframes dragOverlayFadeIn {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.95); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+.dragOverlayIcon {
+  font-size: 48px;
+  color: var(--color-accent-primary);
+}
+
+.dragOverlayText {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.dragOverlayHint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}

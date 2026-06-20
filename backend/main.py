@@ -59,19 +59,29 @@ def setup_logging(config: dict):
     logging.getLogger('websockets').setLevel(logging.WARNING)
 
 
-def check_admin():
-    """检查管理员权限（Windows）"""
+def is_admin():
+    """检查是否为管理员权限（Windows）"""
     if platform.system() == "Windows":
         try:
             import ctypes
-            if not ctypes.windll.shell32.IsUserAnAdmin():
-                logging.warning("建议以管理员权限运行以获得最佳效果（MNDP广播需要）")
+            return ctypes.windll.shell32.IsUserAnAdmin()
         except Exception:
             pass
+    return False
+
+
+def check_admin():
+    """检查管理员权限（Windows）"""
+    if platform.system() == "Windows":
+        if is_admin():
+            logging.info("已以管理员权限运行")
+        else:
+            logging.warning("未以管理员权限运行，部分功能可能受限")
 
 
 def main():
     """主入口"""
+    
     # PyInstaller --noconsole 模式下 sys.stderr/stdout 为 None，
     # uvicorn 日志初始化会调用 isatty() 导致崩溃，需要用黑洞对象替代
     if getattr(sys, 'frozen', False):

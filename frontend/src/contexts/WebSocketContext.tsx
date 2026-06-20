@@ -38,6 +38,7 @@ interface WirelessInterfaceData {
 }
 
 interface WirelessClientData {
+  '.id'?: string;
   interface: string;
   mac: string;
   uptime: string;
@@ -773,6 +774,7 @@ export const WebSocketProvider: React.FC<{
     return () => {
       isCancelledRef.current = true;
       stopWirelessPolling();
+      stopLogsPolling();
       stopBridgePolling();
       stopIpAddressesPolling();
       if (reconnectTimerRef.current) {
@@ -789,7 +791,7 @@ export const WebSocketProvider: React.FC<{
         wsRef.current = null;
       }
     };
-  }, [connect, router?.ipAddress, stopWirelessPolling, stopBridgePolling, stopIpAddressesPolling]);
+  }, [connect, router?.ipAddress, stopWirelessPolling, stopLogsPolling, stopBridgePolling, stopIpAddressesPolling]);
 
   useEffect(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
@@ -797,6 +799,10 @@ export const WebSocketProvider: React.FC<{
       wsRef.current.send(JSON.stringify({ action: 'resume_traffic' }));
     } else {
       wsRef.current.send(JSON.stringify({ action: 'pause_traffic' }));
+    }
+    // 切换到文件页面时通知后端
+    if (currentPage === 'files') {
+      wsRef.current.send(JSON.stringify({ action: 'page_change', page: 'files' }));
     }
   }, [currentPage]);
 

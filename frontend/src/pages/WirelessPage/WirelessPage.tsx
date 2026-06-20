@@ -198,6 +198,7 @@ export const WirelessPage: React.FC = () => {
   useEffect(() => {
     if (wirelessClients.length > 0) {
       const mapped: WirelessClient[] = wirelessClients.map(c => ({
+        '.id': c['.id'] || '',
         interface: c.interface,
         'mac-address': c.mac,
         signal: c.tx_signal,
@@ -496,7 +497,7 @@ export const WirelessPage: React.FC = () => {
       { key: 'hw_retries', originalKey: 'hw-retries' },
       { key: 'adaptive_noise_immunity', originalKey: 'adaptive-noise-immunity' },
       { key: 'preamble_mode', originalKey: 'preamble-mode' },
-      { key: 'allow_shared_key', originalKey: 'allow-shared-key' },
+      { key: 'allow_shared_key', originalKey: 'allow-sharedkey' },
       { key: 'disconnect_timeout', originalKey: 'disconnect-timeout' },
       { key: 'on_fail_retry_time', originalKey: 'on-fail-retry-time' },
       { key: 'update_stats_interval', originalKey: 'update-stats-interval' },
@@ -504,6 +505,27 @@ export const WirelessPage: React.FC = () => {
       { key: 'supported_rates_ag', originalKey: 'supported-rates-a/g' },
       { key: 'basic_rates_b', originalKey: 'basic-rates-b' },
       { key: 'basic_rates_ag', originalKey: 'basic-rates-a/g' },
+      { key: 'distance', originalKey: 'distance' },
+      { key: 'guard_interval', originalKey: 'guard-interval' },
+      { key: 'ht_txchains', originalKey: 'tx-chains' },
+      { key: 'ht_rxchains', originalKey: 'rx-chains' },
+      { key: 'wmm_support', originalKey: 'wmm-support' },
+      { key: 'ampdu_priorities', originalKey: 'ampdu-priorities' },
+      { key: 'amsdu_limit', originalKey: 'amsdu-limit' },
+      { key: 'amsdu_threshold', originalKey: 'amsdu-threshold' },
+      { key: 'ht_stbc', originalKey: 'ht-stbc' },
+      { key: 'ht_ldpc', originalKey: 'ht-ldpc' },
+      { key: 'ht_basic_mcs', originalKey: 'ht-basic-mcs' },
+      { key: 'ht_supported_mcs', originalKey: 'ht-supported-mcs' },
+      { key: 'wds_mode', originalKey: 'wds-mode' },
+      { key: 'wds_default_bridge', originalKey: 'wds-default-bridge' },
+      { key: 'station_roaming', originalKey: 'station-roaming' },
+      // Nstreme 子菜单字段（位于 /interface wireless nstreme）
+      { key: 'enable_nstreme', originalKey: 'enable-nstreme' },
+      { key: 'nstreme_framer_policy', originalKey: 'framer-policy' },
+      { key: 'nstreme_framer_limit', originalKey: 'framer-limit' },
+      { key: 'nstreme_enable_polling', originalKey: 'enable-polling' },
+      { key: 'nstreme_disable_csma', originalKey: 'disable-csma' },
     ];
     
     for (const field of fields) {

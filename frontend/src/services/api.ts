@@ -15,10 +15,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export const api = {
   getDevices: () => request<any[]>('/api/devices'),
   refreshDevices: () => request<any[]>('/api/refresh', { method: 'POST' }),
-  connect: (ip: string, username: string, password: string) =>
+  connect: (ip: string, username: string, password: string, platform?: string) =>
     request<any>('/api/connect', {
       method: 'POST',
-      body: JSON.stringify({ ip, username, password }),
+      body: JSON.stringify({ ip, username, password, platform: platform || '' }),
     }),
   disconnect: (ip: string) => request<any>('/api/logout', {
     method: 'POST',

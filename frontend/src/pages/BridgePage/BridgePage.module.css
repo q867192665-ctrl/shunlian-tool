@@ -1,7 +1,11 @@
 .container {
-  padding: var(--space-xl);
-  max-width: 1400px;
-  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: var(--space-lg);
+  padding-bottom: 80px;
+  gap: var(--space-lg);
+  overflow-y: auto;
 }
 
 .header {

@@ -41,6 +41,10 @@ export const LogPage: React.FC = () => {
     }
     console.log('[LogPage] 启动日志轮询');
     startLogsPolling();
+    return () => {
+      console.log('[LogPage] 停止日志轮询');
+      stopLogsPolling();
+    };
   }, [router?.ipAddress, startLogsPolling, stopLogsPolling]);
 
   useEffect(() => {

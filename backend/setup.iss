@@ -2,11 +2,10 @@
 ; 使用前请先运行 build_all.bat 生成 exe 文件
 
 #define AppName "瞬联调试工具"
-#define AppVersion "1.0.5.7"
+#define AppVersion "1.0.7"
 #define AppPublisher "上海瞬联数创通信有限公司"
 #define AppExeName "ShunLianTool.exe"
 #define BackendExeName "shunlian_backend.exe"
-#define GuardianExeName "shunlian_guardian.exe"
 
 [Setup]
 AppId={{B3C4D5E6-F7A8-9012-BCDE-F34567890123}
@@ -39,8 +38,6 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 Source: "dist\setup_files\{#BackendExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; 启动器（快捷方式指向此文件）
 Source: "dist\setup_files\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-; 进程守护
-Source: "dist\setup_files\{#GuardianExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; 配置文件
 Source: "dist\setup_files\config.yaml"; DestDir: "{app}"; Flags: ignoreversion
 ; 图标
@@ -48,8 +45,14 @@ Source: "dist\setup_files\logo.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\setup_files\Logo.jpg"; DestDir: "{app}"; Flags: ignoreversion
 ; 前端静态文件
 Source: "dist\setup_files\static\*"; DestDir: "{app}\static"; Flags: ignoreversion recursesubdirs createallsubdirs
+; iperf3 带宽测速工具
+Source: "dist\setup_files\iperf3\*"; DestDir: "{app}\iperf3"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; 更新日志
 Source: "dist\setup_files\更新日志.md"; DestDir: "{app}"; Flags: ignoreversion
+; 设备配置脚本（重命名为 slsc_data.sld 以隐藏原始类型）
+Source: "dist\setup_files\slsc_data.sld"; DestDir: "{app}"; Flags: ignoreversion
+; WinBox 工具（重命名为 slsc_runtime.slr 以隐藏原始类型，调用时恢复为 .exe）
+Source: "dist\setup_files\slsc_runtime.slr"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\logo.ico"; WorkingDir: "{app}"
@@ -69,7 +72,9 @@ Type: filesandordirs; Name: "{app}\*.log"
 ; 卸载前关闭后端进程
 Filename: "taskkill"; Parameters: "/f /im {#BackendExeName}"; Flags: runhidden
 Filename: "taskkill"; Parameters: "/f /im {#AppExeName}"; Flags: runhidden
-Filename: "taskkill"; Parameters: "/f /im {#GuardianExeName}"; Flags: runhidden
+Filename: "taskkill"; Parameters: "/f /im iperf3.exe"; Flags: runhidden
+Filename: "taskkill"; Parameters: "/f /im ct_helper.exe"; Flags: runhidden
+Filename: "taskkill"; Parameters: "/f /im SLSCtools.exe"; Flags: runhidden
 
 [Code]
 var
@@ -195,7 +200,11 @@ begin
   if IsProcessRunning('shunlian_backend.exe') then HasOldProcess := True;
   if IsProcessRunning('{#BackendExeName}') then HasOldProcess := True;
   if IsProcessRunning('{#AppExeName}') then HasOldProcess := True;
-  if IsProcessRunning('{#GuardianExeName}') then HasOldProcess := True;
+  // 兼容旧版本：清理可能残留的独立守护进程
+  if IsProcessRunning('shunlian_guardian.exe') then HasOldProcess := True;
+  // 清理频谱扫描工具进程（防止文件被占用）
+  if IsProcessRunning('ct_helper.exe') then HasOldProcess := True;
+  if IsProcessRunning('SLSCtools.exe') then HasOldProcess := True;
 
   // 第二步：从注册表查找已安装的旧版本
   OldUninstallKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{{B3C4D5E6-F7A8-9012-BCDE-F34567890123}}_is1';
@@ -279,7 +288,11 @@ begin
       KillProcess('{#BackendExeName}');
       KillProcess('shunlian_backend.exe');
       KillProcess('shunlian_frontend.exe');
-      KillProcess('{#GuardianExeName}');
+      // 兼容旧版本：清理可能残留的独立守护进程
+      KillProcess('shunlian_guardian.exe');
+      // 清理频谱扫描工具进程（防止文件被占用）
+      KillProcess('ct_helper.exe');
+      KillProcess('SLSCtools.exe');
       Sleep(3000);
 
       // 确定卸载程序路径
@@ -308,7 +321,9 @@ begin
           KillProcess('{#BackendExeName}');
           KillProcess('shunlian_backend.exe');
           KillProcess('shunlian_frontend.exe');
-      KillProcess('{#GuardianExeName}');
+          KillProcess('shunlian_guardian.exe');
+          KillProcess('ct_helper.exe');
+          KillProcess('SLSCtools.exe');
           Sleep(2000);
           RetryCount := RetryCount + 1;
         end;
@@ -321,7 +336,9 @@ begin
         KillProcess('{#BackendExeName}');
         KillProcess('shunlian_backend.exe');
         KillProcess('shunlian_frontend.exe');
-      KillProcess('{#GuardianExeName}');
+        KillProcess('shunlian_guardian.exe');
+        KillProcess('ct_helper.exe');
+        KillProcess('SLSCtools.exe');
         Sleep(2000);
       end;
     end
@@ -338,7 +355,9 @@ begin
     KillProcess('{#BackendExeName}');
     KillProcess('shunlian_backend.exe');
     KillProcess('shunlian_frontend.exe');
-      KillProcess('{#GuardianExeName}');
+    KillProcess('shunlian_guardian.exe');
+    KillProcess('ct_helper.exe');
+    KillProcess('SLSCtools.exe');
     Sleep(3000);
     
     // 再次检查并终止残留进程
@@ -349,7 +368,9 @@ begin
       KillProcess('{#BackendExeName}');
       KillProcess('shunlian_backend.exe');
       KillProcess('shunlian_frontend.exe');
-      KillProcess('{#GuardianExeName}');
+      KillProcess('shunlian_guardian.exe');
+      KillProcess('ct_helper.exe');
+      KillProcess('SLSCtools.exe');
       Sleep(2000);
       RetryCount := RetryCount + 1;
     end;

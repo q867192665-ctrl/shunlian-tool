@@ -44,6 +44,7 @@ export const ReconnectModal: React.FC<ReconnectModalProps> = ({
           ip: router.ipAddress,
           username: router.username,
           password: router.password,
+          platform: router.platform || '',
         }),
       });
 

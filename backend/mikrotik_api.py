@@ -24,6 +24,39 @@ from ssl_context import get_ssl_context
 
 logger = logging.getLogger(__name__)
 
+# ==================== SLSC  平台设备端口配置 ====================
+_device_platforms: Dict[str, str] = {}  # IP -> Platform
+import threading as _threading
+_device_platforms_lock = _threading.Lock()
+
+SLSC_API_PORT = 2468
+SLSC_TELNET_PORT = 3579
+DEFAULT_API_PORT = 8728
+DEFAULT_TELNET_PORT = 23
+
+
+def set_device_platform(ip: str, platform: str) -> None:
+    """记录设备平台信息（从 MNDP 发现）"""
+    with _device_platforms_lock:
+        _device_platforms[ip] = platform
+
+
+def is_slsc_device(ip: str) -> bool:
+    """判断是否为 SLSC 平台设备"""
+    with _device_platforms_lock:
+        platform = _device_platforms.get(ip, '')
+    return 'SLSC' in platform.upper()
+
+
+def get_api_port(ip: str) -> int:
+    """获取设备 API 端口（SLSC=2468,  other=8728）"""
+    return SLSC_API_PORT if is_slsc_device(ip) else DEFAULT_API_PORT
+
+
+def get_telnet_port(ip: str) -> int:
+    """获取设备 Telnet 端口（SLSC=3579,  other=23）"""
+    return SLSC_TELNET_PORT if is_slsc_device(ip) else DEFAULT_TELNET_PORT
+
 
 def decode_mikrotik_hex_escape(text: str) -> str:
     """解码十六进制转义序列 <XX XX XX> 为 UTF-8 字符"""
@@ -44,6 +77,11 @@ class MikroTikAPI:
         self.host = host
         self.username = username
         self.password = password
+        # 自动检测 SLSC 平台设备端口
+        if port == 8728 and is_slsc_device(host):
+            port = SLSC_API_PORT
+        if port == 8729 and is_slsc_device(host):
+            port = SLSC_API_PORT  # SLSC 设备统一使用 2468
         self.port = port
         self.use_ssl = use_ssl
         self.socket: Optional[socket.socket] = None
@@ -150,7 +188,7 @@ class MikroTikAPI:
     
     def _try_legacy_login(self, use_ssl: bool = False) -> Tuple[bool, str]:
         """尝试 Legacy API 登录，返回 (成功与否, 错误信息)"""
-        port = 8729 if use_ssl else 8728
+        port = self.port
         context = None
         last_error = None
         try:

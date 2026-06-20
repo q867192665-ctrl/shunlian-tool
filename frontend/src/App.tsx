@@ -20,6 +20,7 @@ import { LogPage } from './pages/LogPage/LogPage';
 import { FilePage } from './pages/FilePage/FilePage';
 import { SystemPage } from './pages/SystemPage/SystemPage';
 import { RebootPage } from './pages/RebootPage/RebootPage';
+import { SpeedTestPage } from './pages/SpeedTestPage/SpeedTestPage';
 import { TerminalPage } from './pages/TerminalPage/TerminalPage';
 import styles from './App.module.css';
 
@@ -133,7 +134,11 @@ const AppContent: React.FC = () => {
       <main className={styles.main}>
         <Header currentPage={activeNav} />
         <div className={styles.content}>
-          {renderContent()}
+          {/* SpeedTestPage 始终挂载，切换菜单时隐藏/显示，保留测速状态 */}
+          <div style={{ display: activeNav === 'speedtest' ? 'contents' : 'none' }}>
+            <SpeedTestPage />
+          </div>
+          {activeNav !== 'speedtest' && renderContent()}
         </div>
       </main>
       <ReconnectModal

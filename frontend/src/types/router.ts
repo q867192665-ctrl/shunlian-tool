@@ -6,4 +6,5 @@ export interface RouterInfo {
   osVersion: string;
   username: string;
   password: string;
+  platform?: string;
 }

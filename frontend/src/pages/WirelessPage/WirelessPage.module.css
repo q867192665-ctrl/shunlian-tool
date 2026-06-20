@@ -113,7 +113,7 @@
 
 .summaryLabel {
   font-size: 13px;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
 }
 
 .section {
@@ -428,7 +428,7 @@
 .formLabel {
   font-size: 13px;
   font-weight: 500;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
 }
 
 .emptyRow {
@@ -582,7 +582,7 @@
 .scanLabel {
   font-size: 14px;
   font-weight: 500;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
   white-space: nowrap;
 }
 

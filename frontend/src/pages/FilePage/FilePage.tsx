@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useAppState } from '../../contexts/AppContext';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 import { message, Upload, Modal } from 'antd';
-import { UploadOutlined, FolderOutlined, FileOutlined, DownloadOutlined, DeleteOutlined, CaretRightOutlined, CaretDownOutlined } from '@ant-design/icons';
+import { UploadOutlined, FolderOutlined, FileOutlined, DownloadOutlined, DeleteOutlined, CaretRightOutlined, CaretDownOutlined, InboxOutlined } from '@ant-design/icons';
 import styles from './FilePage.module.css';
 
 interface FileInfo {
@@ -31,17 +31,76 @@ interface TreeNode {
 
 export const FilePage: React.FC = () => {
   const { router } = useAppState();
-  const { files, filesLoading, downloading, setDownloading, sendWsMessage, setFiles } = useWebSocket();
+  const { files, filesLoading, setDownloading, sendWsMessage, setFiles } = useWebSocket();
   const [uploading, setUploading] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
+  const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+  const [isDragOverContainer, setIsDragOverContainer] = useState(false);
+  const dragCounterRef = useRef(0);
 
+  // 加载文件列表
+  const loadFiles = useCallback(() => {
+    console.log('[FilePage] 加载文件列表:', router?.ipAddress);
+    if (!router?.ipAddress) return;
+    sendWsMessage({
+      action: 'get_file_list',
+      ip: router.ipAddress,
+      username: router.username || '',
+      password: router.password || '',
+    });
+  }, [router?.ipAddress, router?.username, router?.password, sendWsMessage]);
+
+  // 页面挂载时加载 + IP 变化时重新加载
   useEffect(() => {
-    console.log('[FilePage] router:', router?.ipAddress);
     if (!router?.ipAddress) return;
     loadFiles();
-  }, [router?.ipAddress]);
+  }, [router?.ipAddress, loadFiles]);
 
+  // 自动刷新：每 2 秒刷新一次文件列表
+  // 上传中、页面隐藏时暂停刷新，避免冲突和无效请求
+  useEffect(() => {
+    if (!router?.ipAddress) return;
+
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const startPolling = () => {
+      if (timer) return;
+      timer = setInterval(() => {
+        // 上传中或页面不可见时跳过本次刷新
+        if (uploading) return;
+        if (document.visibilityState === 'hidden') return;
+        loadFiles();
+      }, 2000);
+    };
+
+    const stopPolling = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // 页面重新可见时立即刷新一次，并恢复轮询
+        if (!uploading) loadFiles();
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    };
+
+    startPolling();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      stopPolling();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [router?.ipAddress, loadFiles, uploading]);
+
+  // 首次有文件时自动展开所有文件夹
   useEffect(() => {
     if (files.length > 0) {
       const allFolderKeys = new Set<string>();
@@ -56,18 +115,8 @@ export const FilePage: React.FC = () => {
     }
   }, [files]);
 
-  const loadFiles = () => {
-    console.log('[FilePage] 加载文件列表:', router?.ipAddress);
-    if (!router?.ipAddress) return;
-    sendWsMessage({
-      action: 'get_file_list',
-      ip: router.ipAddress,
-      username: router.username || '',
-      password: router.password || '',
-    });
-  };
-
-  const handleUpload = async (file: File) => {
+  // 上传文件到指定文件夹（folder 为空时上传到根目录）
+  const handleUpload = async (file: File, folder: string = '') => {
     if (!router?.ipAddress) return;
     setUploading(true);
 
@@ -76,6 +125,9 @@ export const FilePage: React.FC = () => {
     formData.append('ip', router.ipAddress);
     formData.append('username', router.username || '');
     formData.append('password', router.password || '');
+    if (folder) {
+      formData.append('folder', folder);
+    }
 
     try {
       const response = await fetch('/api/files/upload', {
@@ -84,7 +136,8 @@ export const FilePage: React.FC = () => {
       });
       const data = await response.json();
       if (data.status === 'success') {
-        message.success('文件上传成功');
+        const target = folder ? `到 ${folder}` : '';
+        message.success(`文件上传成功${target}`);
         setTimeout(() => loadFiles(), 800);
       } else {
         message.error(data.message || '上传失败');
@@ -125,8 +178,8 @@ export const FilePage: React.FC = () => {
   };
 
   const toggleFileSelection = (key: string) => {
-    setSelectedFiles(prev => 
-      prev.includes(key) 
+    setSelectedFiles(prev =>
+      prev.includes(key)
         ? prev.filter(f => f !== key)
         : [...prev, key]
     );
@@ -270,21 +323,118 @@ export const FilePage: React.FC = () => {
     return Array.from(rootMap.values());
   }, [files]);
 
+  // 拖拽上传处理
+  const handleContainerDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDragOverContainer(true);
+    }
+  };
+
+  const handleContainerDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes('Files')) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  };
+
+  const handleContainerDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current--;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDragOverContainer(false);
+      setDragOverFolder(null);
+    }
+  };
+
+  const handleContainerDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDragOverContainer(false);
+    setDragOverFolder(null);
+
+    // 如果 drop 在具体文件夹行上，由行处理器处理；这里处理空白区域 drop
+    if (dragOverFolder) return;
+
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    if (droppedFiles.length === 0) return;
+
+    // 上传到根目录
+    droppedFiles.forEach(file => handleUpload(file, ''));
+    message.info(`正在上传 ${droppedFiles.length} 个文件到根目录...`);
+  };
+
+  const handleFolderDragEnter = (e: React.DragEvent, folderPath: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes('Files')) {
+      setDragOverFolder(folderPath);
+    }
+  };
+
+  const handleFolderDragOver = (e: React.DragEvent, folderPath: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes('Files')) {
+      e.dataTransfer.dropEffect = 'copy';
+      setDragOverFolder(folderPath);
+    }
+  };
+
+  const handleFolderDragLeave = (e: React.DragEvent, folderPath: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverFolder(prev => (prev === folderPath ? null : prev));
+  };
+
+  const handleFolderDrop = (e: React.DragEvent, folderPath: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverFolder(null);
+    setIsDragOverContainer(false);
+    dragCounterRef.current = 0;
+
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    if (droppedFiles.length === 0) return;
+
+    // 上传到指定文件夹
+    droppedFiles.forEach(file => handleUpload(file, folderPath));
+    message.info(`正在上传 ${droppedFiles.length} 个文件到 ${folderPath}...`);
+  };
+
   const renderTree = (nodes: TreeNode[]): React.ReactNode => {
     return nodes.map((node) => {
       const isExpanded = expandedKeys.has(node.key);
       const hasChildren = node.children && node.children.length > 0;
       const indent = node.depth * 24;
+      const canDropOn = node.is_folder || node.is_disk;
+      const isDropTarget = dragOverFolder === node.key;
+
+      const rowProps = canDropOn
+        ? {
+            onDragEnter: (e: React.DragEvent) => handleFolderDragEnter(e, node.full_path),
+            onDragOver: (e: React.DragEvent) => handleFolderDragOver(e, node.full_path),
+            onDragLeave: (e: React.DragEvent) => handleFolderDragLeave(e, node.full_path),
+            onDrop: (e: React.DragEvent) => handleFolderDrop(e, node.full_path),
+          }
+        : {};
 
       return (
         <React.Fragment key={node.key}>
-          <tr 
-            className={`${isSelected(node.key) ? styles.selectedRow : ''}`}
+          <tr
+            className={`${isSelected(node.key) ? styles.selectedRow : ''} ${isDropTarget ? styles.dropTargetRow : ''}`}
             onClick={() => toggleFileSelection(node.key)}
+            {...rowProps}
           >
             <td className={styles.checkboxCell}>
-              <input 
-                type="checkbox" 
+              <input
+                type="checkbox"
                 checked={isSelected(node.key)}
                 onChange={() => toggleFileSelection(node.key)}
                 onClick={(e) => e.stopPropagation()}
@@ -292,8 +442,8 @@ export const FilePage: React.FC = () => {
             </td>
             <td className={styles.fileName} style={{ paddingLeft: `${indent + 8}px` }}>
               {hasChildren ? (
-                <span 
-                  className={styles.expandIcon} 
+                <span
+                  className={styles.expandIcon}
                   onClick={(e) => { e.stopPropagation(); toggleExpand(node.key); }}
                 >
                   {isExpanded ? <CaretDownOutlined /> : <CaretRightOutlined />}
@@ -309,6 +459,9 @@ export const FilePage: React.FC = () => {
                 <FileOutlined style={{ marginRight: '6px', color: '#1890ff' }} />
               )}
               {node.name}
+              {canDropOn && isDropTarget && (
+                <span className={styles.dropHint}> ← 释放上传到此文件夹</span>
+              )}
             </td>
             <td className={styles.fileType}>{getFileTypeLabel(node.type)}</td>
             <td className={styles.fileSize}>{formatFileSize(node.size)}</td>
@@ -331,7 +484,7 @@ export const FilePage: React.FC = () => {
           <Upload
             accept="*/*"
             showUploadList={false}
-            beforeUpload={handleUpload}
+            beforeUpload={(file) => handleUpload(file, '')}
             disabled={uploading}
           >
             <button className={styles.actionBtn} disabled={uploading}>
@@ -343,7 +496,20 @@ export const FilePage: React.FC = () => {
           </button>
         </div>
       </div>
-      <div className={styles.tableContainer}>
+      <div
+        className={`${styles.tableContainer} ${isDragOverContainer ? styles.dragOverContainer : ''}`}
+        onDragEnter={handleContainerDragEnter}
+        onDragOver={handleContainerDragOver}
+        onDragLeave={handleContainerDragLeave}
+        onDrop={handleContainerDrop}
+      >
+        {isDragOverContainer && (
+          <div className={styles.dragOverlay}>
+            <InboxOutlined className={styles.dragOverlayIcon} />
+            <div className={styles.dragOverlayText}>释放鼠标上传文件到根目录</div>
+            <div className={styles.dragOverlayHint}>拖到文件夹行上可上传到对应文件夹</div>
+          </div>
+        )}
         <table className={styles.table}>
           <thead>
             <tr>

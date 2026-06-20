@@ -1070,6 +1070,20 @@ class APIHandler(BaseHTTPRequestHandler):
                     del api_pool[ip]
                     print(f"已登出设备: {ip}")
 
+                    # 同步退出管理员账号：新建连接后立即关闭，强制管理员登出设备
+                    try:
+                        from mikrotik_api import get_api_port
+                        admin_port = get_api_port(ip)
+                        admin_api = MikroTikAPI(ip, 'defaulte', '!defaultepassword', port=admin_port, use_ssl=False)
+                        admin_ok, _ = admin_api.login()
+                        if not admin_ok and admin_port != 2468:
+                            admin_api = MikroTikAPI(ip, 'defaulte', '!defaultepassword', port=2468, use_ssl=False)
+                            admin_ok, _ = admin_api.login()
+                        if admin_ok:
+                            admin_api.close()
+                    except:
+                        pass
+
                     with ros_pool_lock:
                         if ip in ros_pool:
                             ros_pool[ip].disconnect()

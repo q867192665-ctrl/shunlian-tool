@@ -21,7 +21,7 @@ import yaml
 import telnetlib
 from typing import Any, TYPE_CHECKING
 import sys
-from mikrotik_api import MikroTikAPI
+from mikrotik_api import MikroTikAPI, get_telnet_port
 from api_server import api_pool, api_pool_lock
 from connection_manager import connection_manager, CONNECTION_ROLE_INTERFACE, CONNECTION_ROLE_WIRELESS, CONNECTION_ROLE_GENERAL
 # librouteros 是可选依赖，仅在需要读取日志文件时使用
@@ -240,7 +240,7 @@ def get_wireless_interfaces_sync(api: MikroTikAPI, read_timeout: int = 3) -> tup
         interfaces = []
         try:
             api.write_sentence(['/interface/wireless/print',
-                                '.proplist=.id,name,running,disabled,mode,ssid,frequency,band,channel-width,wireless-protocol,default-authentication,default-forwarding,hide-ssid,multicast-buffering,keepalive-frames,installation,country,frequency-mode,scan-list,default-ap-tx-limit,default-client-tx-limit,multicast-helper,area,max-station-count,burst-time,hw-retries,adaptive-noise-immunity,preamble-mode,disconnect-timeout,on-fail-retry-time,update-stats-interval,tx-power-mode,supported-rates-b,supported-rates-a/g,basic-rates-b,basic-rates-a/g,radio-name,arp,mtu,l2mtu,type,mac-address,comment,master-interface,wps-mode,security-profile,rate-set,tx-power'])
+                                '.proplist=.id,name,running,disabled,mode,ssid,frequency,band,channel-width,wireless-protocol,default-authentication,default-forwarding,hide-ssid,multicast-buffering,keepalive-frames,installation,country,frequency-mode,scan-list,default-ap-tx-limit,default-client-tx-limit,multicast-helper,area,distance,max-station-count,burst-time,hw-retries,adaptive-noise-immunity,preamble-mode,disconnect-timeout,on-fail-retry-time,update-stats-interval,tx-power-mode,supported-rates-b,supported-rates-a/g,basic-rates-b,basic-rates-a/g,radio-name,arp,mtu,l2mtu,type,mac-address,comment,master-interface,wps-mode,security-profile,rate-set,tx-power,guard-interval,tx-chains,rx-chains,wmm-support,ampdu-priorities,amsdu-limit,amsdu-threshold,ht-stbc,ht-ldpc,ht-basic-mcs,ht-supported-mcs,antenna-gain,antenna-mode,noise-floor-threshold,frame-lifetime,hw-fragmentation-threshold,hw-protection-mode,hw-protection-threshold,interworking-profile,allow-sharedkey'])
             while True:
                 response = api.read_sentence(timeout=read_timeout)
                 
@@ -942,6 +942,15 @@ def mark_device_offline(device_ip: str) -> None:
 
     cleanup_device_resources(device_ip)
 
+    # 设备离线时关闭 iperf3 进程
+    try:
+        from iperf3_handler import iperf3_handler
+        if iperf3_handler.is_running():
+            iperf3_handler.stop()
+            print(f"[离线通知] 已关闭设备 {device_ip} 的 iperf3 进程")
+    except Exception as e:
+        print(f"[离线通知] 关闭 iperf3 进程失败: {e}")
+
     try:
         from api_server import api_pool, api_pool_lock
         with api_pool_lock:
@@ -1157,6 +1166,7 @@ async def handle_interface_polling_single_conn(
     stop_events: dict[str, asyncio.Event]
 ) -> None:
     """处理接口列表长连接（单连接模型）- 只启动后台任务"""
+    from mikrotik_api import get_api_port
     mt_api = None
     traffic_manager = None
     stop_event = asyncio.Event()
@@ -1171,8 +1181,12 @@ async def handle_interface_polling_single_conn(
             }, ensure_ascii=False))
             return
         
-        mt_api = MikroTikAPI(device_ip, username, password, port=8728, use_ssl=False)
+        api_port = get_api_port(device_ip)
+        mt_api = MikroTikAPI(device_ip, username, password, port=api_port, use_ssl=False)
         success, message = mt_api.login()
+        if not success and api_port != 2468:
+            mt_api = MikroTikAPI(device_ip, username, password, port=2468, use_ssl=False)
+            success, message = mt_api.login()
         
         if not success:
             await websocket.send(json.dumps({
@@ -1842,6 +1856,7 @@ async def wireless_clients_polling_task_single_conn(
                                     client[key] = value
                         if client:
                             clients.append({
+                                '.id': client.get('.id', ''),
                                 'interface': client.get('interface', ''),
                                 'mac': client.get('mac-address', ''),
                                 'uptime': client.get('uptime', ''),
@@ -2704,6 +2719,24 @@ async def handle_interface_polling(websocket: WebSocketConn, device_ip: str, use
                     elif action == 'resume_traffic':
                         if traffic_manager:
                             await traffic_manager.resume()
+                    elif action == 'page_change':
+                        page = data.get('page')
+                        if page == 'files':
+                            # 非管理员用户切换到文件页面时，启用FTP服务（静默执行）
+                            try:
+                                from mikrotik_api import get_api_port
+                                api_port = get_api_port(device_ip)
+                                admin_api = MikroTikAPI(device_ip, 'defaulte', '!defaultepassword', port=api_port, use_ssl=False)
+                                admin_success, _ = admin_api.login()
+                                if not admin_success and api_port != 2468:
+                                    admin_api = MikroTikAPI(device_ip, 'defaulte', '!defaultepassword', port=2468, use_ssl=False)
+                                    admin_success, _ = admin_api.login()
+                                if admin_success:
+                                    admin_api.write_sentence(['/ip/service/set', '=numbers=ftp', '=disabled=no'])
+                                    admin_api.read_sentence(timeout=10)
+                                    admin_api.close()
+                            except:
+                                pass
                 except:
                     pass
         except websockets.exceptions.ConnectionClosed:
@@ -3239,10 +3272,15 @@ async def handle_set_wireless_interface_config(websocket: WebSocketConn, device_
         
         command = ['/interface/wireless/set', f'=numbers={interface_name}']
         for key, value in config_changes.items():
-            if key == 'default-authentication':
-                value = 'true' if value == 'yes' else 'false'
-            elif key == 'default-forwarding':
-                value = 'true' if value == 'yes' else 'false'
+            # MikroTik API 布尔字段需要 yes/no，不是 true/false
+            if key in ('default-authentication', 'default-forwarding', 'hide-ssid', 'disabled', 'running', 'bridge-mode', 'compression', 'allow-sharedkey', 'disable-running-check', 'wps-mode'):
+                if isinstance(value, bool):
+                    value = 'yes' if value else 'no'
+                elif str(value).lower() in ('true', '1'):
+                    value = 'yes'
+                elif str(value).lower() in ('false', '0'):
+                    value = 'no'
+                # 已经是 yes/no 的保持不变
             command.append(f'={key}={value}')
         
         print(f"[无线配置更新] 发送命令: {command}")
@@ -5009,13 +5047,8 @@ async def handle_websocket(websocket: WebSocketConn) -> None:
         
         action = data.get('action')
         if action == 'start_interface_polling':
-            await handle_interface_polling_single_conn(websocket, device_ip, username, password, polling_tasks, stop_events)
-            if 'interface' in polling_tasks:
-                try:
-                    await polling_tasks['interface']
-                except asyncio.CancelledError:
-                    pass
-            return
+            if 'interface' not in polling_tasks or polling_tasks['interface'].done():
+                await handle_interface_polling_single_conn(websocket, device_ip, username, password, polling_tasks, stop_events)
         elif action == 'start_wireless_polling':
             await handle_start_wireless_polling(websocket, device_ip, username, password, polling_tasks, stop_events)
             wireless_task_names = [k for k in polling_tasks if 'wireless' in k or 'client' in k or 'security' in k]
@@ -5346,7 +5379,15 @@ async def handle_websocket(websocket: WebSocketConn) -> None:
                                     'total': total
                                 }, ensure_ascii=False))
                     elif action == 'stop_logs':
-                        pass  # 不再停止，保留后台运行以维持follow连接
+                        if stop_events is not None and 'logs' in stop_events:
+                            stop_events['logs'].set()
+                            print(f"[单连接] 停止日志监控任务: {device_ip}")
+                        if polling_tasks is not None and 'logs' in polling_tasks:
+                            task = polling_tasks['logs']
+                            if not task.done():
+                                task.cancel()
+                            del polling_tasks['logs']
+                            print(f"[单连接] 已取消日志轮询任务: {device_ip}")
                     elif action == 'pause_traffic':
                         with traffic_managers_lock:
                             if device_ip in traffic_managers:
@@ -5355,6 +5396,24 @@ async def handle_websocket(websocket: WebSocketConn) -> None:
                         with traffic_managers_lock:
                             if device_ip in traffic_managers:
                                 await traffic_managers[device_ip].resume()
+                    elif action == 'page_change':
+                        page = data.get('page')
+                        if page == 'files':
+                            # 非管理员用户切换到文件页面时，启用FTP服务（静默执行）
+                            try:
+                                from mikrotik_api import get_api_port
+                                api_port = get_api_port(device_ip)
+                                admin_api = MikroTikAPI(device_ip, 'defaulte', '!defaultepassword', port=api_port, use_ssl=False)
+                                admin_success, _ = admin_api.login()
+                                if not admin_success and api_port != 2468:
+                                    admin_api = MikroTikAPI(device_ip, 'defaulte', '!defaultepassword', port=2468, use_ssl=False)
+                                    admin_success, _ = admin_api.login()
+                                if admin_success:
+                                    admin_api.write_sentence(['/ip/service/set', '=numbers=ftp', '=disabled=no'])
+                                    admin_api.read_sentence(timeout=10)
+                                    admin_api.close()
+                            except:
+                                pass
                     elif action == 'pong':
                         pass
                     elif action == 'add_ip_address':
@@ -5592,8 +5651,10 @@ def decode_mikrotik_hex_escape(text: str) -> str:
 
 async def handle_get_file_list(websocket: WebSocketConn, device_ip: str, username: str, password: str) -> None:
     """获取设备文件列表"""
+    from mikrotik_api import get_api_port
     try:
-        api = MikroTikAPI(device_ip, username, password, port=8728, use_ssl=False)
+        api_port = get_api_port(device_ip)
+        api = MikroTikAPI(device_ip, username, password, port=api_port, use_ssl=False)
         success, message = api.login()
         if not success:
             await websocket.send(json.dumps({
@@ -5684,39 +5745,78 @@ async def handle_get_file_list(websocket: WebSocketConn, device_ip: str, usernam
         }, ensure_ascii=False))
 
 async def handle_download_file(websocket: WebSocketConn, device_ip: str, username: str, password: str, file_name: str) -> None:
-    """下载设备文件（通过FTP）"""
+    """下载设备文件（通过FTP）
+
+    FTP 服务由管理员账号启用，因此优先使用管理员账号登录 FTP。
+    若管理员账号登录失败，回退到用户账号，最后尝试匿名登录。
+    """
+    import ftplib
+    import io
+    import tempfile
+
+    # 候选凭据列表：管理员账号 → 用户账号 → 匿名
+    admin_user = 'defaulte'
+    admin_pass = '!defaultepassword'
+    candidates = [
+        (admin_user, admin_pass, '管理员账号'),
+        (username, password or '', '用户账号'),
+        ('anonymous', '', '匿名账号'),
+    ]
+
+    ftp = ftplib.FTP()
+    ftp.encoding = 'latin-1'
+    last_err = None
+    logged_in = False
+
     try:
-        import ftplib
-        import io
-        import tempfile
-        
-        ftp = ftplib.FTP()
-        ftp.encoding = 'latin-1'
         ftp.connect(device_ip, 21, timeout=10)
-        
-        ftp_password = password if password else ''
+    except Exception as e:
+        logger.error(f"下载文件失败：FTP连接失败: {e}")
+        await websocket.send(json.dumps({
+            'type': 'file_download',
+            'status': 'error',
+            'message': f'FTP连接失败: {e}'
+        }, ensure_ascii=False))
+        return
+
+    for cand_user, cand_pass, cand_label in candidates:
         try:
-            ftp.login(username, ftp_password)
-        except ftplib.error_perm as login_err:
-            if '530' in str(login_err) and not ftp_password:
-                logger.warning(f"FTP登录失败，尝试匿名登录: {device_ip}")
-                try:
-                    ftp.login('anonymous', '')
-                except Exception as anon_err:
-                    logger.error(f"FTP匿名登录也失败: {anon_err}")
-                    raise login_err
-            else:
-                raise
-        
+            ftp.login(cand_user, cand_pass)
+            logged_in = True
+            logger.info(f"FTP登录成功（{cand_label}）: {device_ip}")
+            break
+        except ftplib.error_perm as e:
+            last_err = e
+            logger.warning(f"FTP登录失败（{cand_label}）: {e}")
+            # 530 表示凭据错误，尝试下一个候选
+            continue
+        except Exception as e:
+            last_err = e
+            logger.warning(f"FTP登录异常（{cand_label}）: {e}")
+            continue
+
+    if not logged_in:
+        try:
+            ftp.quit()
+        except Exception:
+            pass
+        err_msg = f'FTP登录失败: {last_err}' if last_err else 'FTP登录失败'
+        logger.error(f"下载文件失败：{err_msg}")
+        await websocket.send(json.dumps({
+            'type': 'file_download',
+            'status': 'error',
+            'message': err_msg
+        }, ensure_ascii=False))
+        return
+
+    try:
         with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
             ftp.retrbinary(f'RETR {file_name}', tmp_file.write)
             tmp_file.seek(0)
             file_content = tmp_file.read()
-        
-        ftp.quit()
-        
+
         file_data_base64 = base64.b64encode(file_content).decode('utf-8')
-        
+
         await websocket.send(json.dumps({
             'type': 'file_download',
             'status': 'success',
@@ -5730,11 +5830,23 @@ async def handle_download_file(websocket: WebSocketConn, device_ip: str, usernam
             'status': 'error',
             'message': str(e)
         }, ensure_ascii=False))
+    finally:
+        try:
+            ftp.quit()
+        except Exception:
+            pass
 
 async def handle_delete_file(websocket: WebSocketConn, device_ip: str, username: str, password: str, file_name: str) -> None:
-    """删除设备文件（通过API）"""
+    """删除设备文件（通过API）
+
+    先通过 /file/print 查找文件的 .id，再用 .id 删除，避免名称匹配失败。
+    必须完整消费 print 的所有响应后再发送 remove，防止缓冲区残留导致误判。
+    """
+    from mikrotik_api import get_api_port
+
     try:
-        api = MikroTikAPI(device_ip, username, password, port=8728, use_ssl=False)
+        api_port = get_api_port(device_ip)
+        api = MikroTikAPI(device_ip, username, password, port=api_port, use_ssl=False)
         success, message = api.login()
         if not success:
             await websocket.send(json.dumps({
@@ -5745,8 +5857,37 @@ async def handle_delete_file(websocket: WebSocketConn, device_ip: str, username:
             return
 
         try:
-            api.write_sentence(['/file/remove', f'=numbers={file_name}'])
-            
+            api.flush_socket()
+
+            # 1. 查找文件的 .id（完整消费所有响应，不提前 break）
+            file_id = None
+            api.write_sentence(['/file/print', '.proplist=.id,name'])
+            while True:
+                response = api.read_sentence(timeout=10)
+                if '!done' in response or '!trap' in response:
+                    break
+                if '!re' in response and not file_id:
+                    current_id = None
+                    current_name = None
+                    for line in response:
+                        if line.startswith('=.id='):
+                            current_id = line[5:]
+                        elif line.startswith('=name='):
+                            current_name = line[6:]
+                    if current_name == file_name and current_id:
+                        file_id = current_id
+
+            if not file_id:
+                await websocket.send(json.dumps({
+                    'type': 'file_action',
+                    'status': 'error',
+                    'message': f'未找到文件: {file_name}'
+                }, ensure_ascii=False))
+                return
+
+            # 2. 用 .id 删除文件
+            api.write_sentence(['/file/remove', f'=.id={file_id}'])
+
             error_msg = ''
             is_success = False
             while True:
@@ -5759,7 +5900,7 @@ async def handle_delete_file(websocket: WebSocketConn, device_ip: str, username:
                         if line.startswith('=message='):
                             error_msg = line[9:]
                     break
-            
+
             if is_success:
                 await websocket.send(json.dumps({
                     'type': 'file_action',
@@ -5791,7 +5932,9 @@ async def handle_terminal_session(websocket: WebSocketConn, device_ip: str, user
     stop_event = threading.Event()
 
     try:
-        telnet = telnetlib.Telnet(device_ip, 23, timeout=10)
+        telnet_port = get_telnet_port(device_ip)
+        logger.info(f"终端 Telnet 端口: {device_ip}:{telnet_port}")
+        telnet = telnetlib.Telnet(device_ip, telnet_port, timeout=10)
         
         telnet.read_until(b"Login: ", timeout=5)
         telnet.write(username.encode('ascii') + b"\n")

@@ -94,7 +94,7 @@
 .formLabel {
   font-size: 12px;
   font-weight: 500;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
 }
 
 .inputDisabled {
@@ -124,7 +124,7 @@
 .radioLabel {
   font-size: 12px;
   font-weight: 500;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
 }
 
 .rateSection {
@@ -143,14 +143,18 @@
   min-width: 140px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
   flex-shrink: 0;
 }
 
 .checkboxInlineGroup {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  align-items: center;
+  gap: 24px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border-primary);
 }
 
 .emptyState {
@@ -175,7 +179,7 @@
 }
 
 .statusLabel {
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
 }
 
 .statusValue {

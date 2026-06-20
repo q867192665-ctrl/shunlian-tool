@@ -22,6 +22,13 @@ export const LoginPage: React.FC = () => {
   const [updateInfo, setUpdateInfo] = useState({ currentVersion: '', latestVersion: '', changelog: '', downloadUrl: '' });
   const [appVersion, setAppVersion] = useState('');
   const [themeDropdownVisible, setThemeDropdownVisible] = useState(false);
+  const [selectedPlatform, setSelectedPlatform] = useState('');
+  const [selectedMac, setSelectedMac] = useState('');
+  const [debugModalVisible, setDebugModalVisible] = useState(false);
+  // 调试模式仅当次会话有效：使用 sessionStorage，网页重开（关闭标签页/刷新）后自动失效
+  const [debugModeEnabled, setDebugModeEnabled] = useState(() => sessionStorage.getItem('debugModeEnabled') === 'true');
+  const [contextMenu, setContextMenu] = useState<{ visible: boolean; x: number; y: number; device: DeviceInfo | null }>({ visible: false, x: 0, y: 0, device: null });
+  const contextMenuRef = React.useRef<HTMLDivElement>(null);
   const themeDropdownRef = React.useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -31,14 +38,30 @@ export const LoginPage: React.FC = () => {
     }
   }, [rememberPassword]);
 
+  // 点击外部关闭主题下拉和右键菜单
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (themeDropdownRef.current && !themeDropdownRef.current.contains(e.target as Node)) {
         setThemeDropdownVisible(false);
       }
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setContextMenu(prev => prev.visible ? { ...prev, visible: false } : prev);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Alt+Shift+Z 打开调试弹窗
+  useEffect(() => {
+    const handleDebugKey = (e: KeyboardEvent) => {
+      if (e.altKey && e.shiftKey && (e.key === 'Z' || e.key === 'z')) {
+        e.preventDefault();
+        setDebugModalVisible(true);
+      }
+    };
+    document.addEventListener('keydown', handleDebugKey);
+    return () => document.removeEventListener('keydown', handleDebugKey);
   }, []);
 
   const fetchDevices = useCallback(async () => {
@@ -128,7 +151,7 @@ export const LoginPage: React.FC = () => {
       const response = await fetch('/api/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ip, username, password }),
+        body: JSON.stringify({ ip, username, password, platform: selectedPlatform }),
       });
       const result = await response.json();
 
@@ -141,6 +164,7 @@ export const LoginPage: React.FC = () => {
           osVersion: result.routeros_version || '---',
           username: result.username,
           password: password,
+          platform: selectedPlatform,
         });
         setLoggedIn(true);
       } else {
@@ -168,6 +192,8 @@ export const LoginPage: React.FC = () => {
     const deviceIp = device['IPv4-Address'] || device.ipv4_address || device.ip || '';
     if (deviceIp) {
       setIp(deviceIp);
+      setSelectedPlatform((device['Platform'] || '').toString());
+      setSelectedMac((device['MAC-Address'] || device.mac_address || '').toString());
       if ((device['Identity'] || device.identity) && (device['Identity'] || device.identity) !== 'Unknown') {
         setUsername('admin');
       }
@@ -178,13 +204,54 @@ export const LoginPage: React.FC = () => {
     if (e.key === 'Enter') handleLogin();
   };
 
+  // 启用调试模式（仅当次会话有效，sessionStorage 在标签页关闭/刷新后自动清除）
+  const handleEnableDebugMode = () => {
+    sessionStorage.setItem('debugModeEnabled', 'true');
+    setDebugModeEnabled(true);
+    setDebugModalVisible(false);
+  };
+
+  // 右键菜单处理
+  const handleContextMenu = (e: React.MouseEvent, device: DeviceInfo) => {
+    console.log('[DEBUG] 右键触发, debugModeEnabled:', debugModeEnabled);
+    if (!debugModeEnabled) return;
+    e.preventDefault();
+    setContextMenu({ visible: true, x: e.clientX, y: e.clientY, device });
+    console.log('[DEBUG] 右键菜单已显示');
+  };
+
+  // 使用英文工具
+  const handleEnglishTool = async () => {
+    const device = contextMenu.device;
+    setContextMenu({ visible: false, x: 0, y: 0, device: null });
+    if (!device) return;
+
+    const mac = (device['MAC-Address'] || device.mac_address || '').toString();
+    console.log('[DEBUG] 调用后端, MAC:', mac);
+    if (!mac) return;
+
+    try {
+      const res = await fetch('/api/debug-trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mac }),
+      });
+      const data = await res.json();
+      console.log('[DEBUG] 后端响应:', data);
+    } catch (e: any) {
+      console.error('[DEBUG] 请求失败:', e);
+    }
+  };
+
   const filteredDevices = devices.filter(d => {
+    const platform = (d['Platform'] || '').toString();
+    if (!platform.toUpperCase().includes('SLSC')) return false;
     if (!search) return true;
     const s = search.toLowerCase();
     const identity = (d['Identity'] || d.identity || '').toString().toLowerCase();
     const dip = (d['IPv4-Address'] || d.ipv4_address || d.ip || '').toString().toLowerCase();
-    const mac = (d['MAC-Address'] || d.mac_address || '').toString().toLowerCase();
-    return identity.includes(s) || dip.includes(s) || mac.includes(s);
+    const macAddr = (d['MAC-Address'] || d.mac_address || '').toString().toLowerCase();
+    return identity.includes(s) || dip.includes(s) || macAddr.includes(s);
   });
 
   return (
@@ -312,7 +379,7 @@ export const LoginPage: React.FC = () => {
 
         <div className={styles.discoveryHeader}>
           <h2 className={styles.discoveryTitle}>设备发现</h2>
-          <span className={styles.deviceCount}>{devices.length} 台设备</span>
+          <span className={styles.deviceCount}>{filteredDevices.length} 台设备</span>
         </div>
 
         <div className={styles.deviceList}>
@@ -343,6 +410,7 @@ export const LoginPage: React.FC = () => {
                       className={ip === dip ? styles.selected : ''}
                       onClick={() => selectDevice(d)}
                       onDoubleClick={() => { selectDevice(d); handleLogin(); }}
+                      onContextMenu={(e) => handleContextMenu(e, d)}
                     >
                       <td><span className={styles.statusDot} /></td>
                       <td className={styles.deviceName}>{d['Identity'] || d.identity || '-'}</td>
@@ -368,6 +436,41 @@ export const LoginPage: React.FC = () => {
         downloadUrl={updateInfo.downloadUrl}
         onClose={() => setUpdateVisible(false)}
       />
+      {/* Alt+Shift+Z 调试模式激活弹窗 */}
+      {debugModalVisible && (
+        <div className={styles.debugOverlay} onClick={() => setDebugModalVisible(false)}>
+          <div className={styles.debugModal} onClick={e => e.stopPropagation()}>
+            <div className={styles.debugHeader}>
+              <h2 className={styles.debugTitle}>调试选项</h2>
+              <button className={styles.debugCloseBtn} onClick={() => setDebugModalVisible(false)}>✕</button>
+            </div>
+            <div className={styles.debugBody}>
+              <div className={styles.debugDesc}>
+                启用后，可在设备列表中右键单击设备调用英文调试工具。
+                <br />
+                该功能仅对当前会话有效，关闭或刷新页面后自动失效。
+              </div>
+              {debugModeEnabled && (
+                <div className={styles.debugActiveBadge}>● 当前会话已启用</div>
+              )}
+            </div>
+            <div className={styles.debugFooter}>
+              <button className={styles.debugBtnSecondary} onClick={() => setDebugModalVisible(false)}>取消</button>
+              <button className={styles.debugBtnPrimary} onClick={handleEnableDebugMode}>
+                {debugModeEnabled ? '重新启用' : '启用英文调试工具'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 右键菜单 - 仅调试模式激活时显示 */}
+      {contextMenu.visible && (
+        <div ref={contextMenuRef} className={styles.contextMenu} style={{ left: contextMenu.x, top: contextMenu.y }}>
+          <div className={styles.contextMenuItem} onClick={handleEnglishTool}>
+            使用英文工具
+          </div>
+        </div>
+      )}
     </>
   );
 };

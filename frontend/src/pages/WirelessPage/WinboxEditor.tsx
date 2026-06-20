@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Input, Select, Checkbox, Radio } from 'antd';
+import { Input, Select, Checkbox, Radio, AutoComplete, Modal } from 'antd';
 import { DownOutlined, RightOutlined } from '@ant-design/icons';
 import styles from './WinboxEditor.module.css';
 
@@ -47,6 +47,7 @@ const tabs = [
   { key: 'datarates', label: '数据速率' },
   { key: 'advanced', label: '高级' },
   { key: 'ht', label: 'HT' },
+  { key: 'mcs', label: 'MCS速率' },
   { key: 'wds', label: 'WDS' },
   { key: 'nstreme', label: 'Nstreme' },
   { key: 'txpower', label: '发射功率' },
@@ -96,6 +97,22 @@ const frequencyOptions5G = [
   { value: '5805', label: '5805 MHz (信道 161)', channel: 161 },
   { value: '5825', label: '5825 MHz (信道 165)', channel: 165 },
 ];
+
+// 超级信道模式：5.8G 频率范围 4920-6100MHz，步长 5MHz
+// 标准信道（5180/5200/5220 等）标记为 isStandard，前端加粗显示
+const superchannelOptions5G: { value: string; label: string; channel: number; isStandard: boolean }[] = (() => {
+  const options: { value: string; label: string; channel: number; isStandard: boolean }[] = [];
+  for (let freq = 4920; freq <= 6100; freq += 5) {
+    const standard = frequencyOptions5G.find(f => f.value === String(freq));
+    options.push({
+      value: String(freq),
+      label: standard ? standard.label : `${freq} MHz`,
+      channel: standard ? standard.channel : -1,
+      isStandard: !!standard,
+    });
+  }
+  return options;
+})();
 
 const countryList = [
   { value: 'no_country_set', label: '默认' },
@@ -490,7 +507,7 @@ const countryFrequencyRules: { [key: string]: { channels24G: number[], channels5
 };
 
 export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, onChange, routerIp, securityProfiles }) => {
-  const [activeTab, setActiveTab] = useState('general');
+  const [activeTab, setActiveTab] = useState('wireless');
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
     'advanced': true,
     'rate-limit': true,
@@ -825,6 +842,12 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
     const freqMode = (iface as any)['frequency-mode'] || 'regulatory-domain';
     
     const bandType = getBandType(bandVal);
+
+    // 超级信道模式：5.8G 显示 4920-6100MHz 全范围，标准信道加粗
+    if (freqMode === 'superchannel' && (bandType === '5ghz' || bandType === 'both')) {
+      return superchannelOptions5G;
+    }
+
     const validChannels = getValidChannelsForWidth(channelWidth, bandType);
     
     let filteredChannels = validChannels;
@@ -914,11 +937,24 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
     
     if (field === 'frequency-mode') {
       const currentFreq = iface.frequency;
+      const bandType = getBandType(iface.band || '');
+
+      // 切换到超级信道：5.8G 频率范围 4920-6100MHz
+      if (value === 'superchannel' && (bandType === '5ghz' || bandType === 'both')) {
+        if (currentFreq) {
+          const freqNum = parseInt(currentFreq, 10);
+          if (isNaN(freqNum) || freqNum < 4920 || freqNum > 6100) {
+            updated.frequency = '5180';
+          }
+        } else {
+          updated.frequency = '5180';
+        }
+      }
+
       if (currentFreq && value === 'regulatory-domain') {
         const currentChannel = frequencyOptions24G.find(f => f.value === currentFreq)?.channel || 
                               frequencyOptions5G.find(f => f.value === currentFreq)?.channel;
         if (currentChannel) {
-          const bandType = getBandType(iface.band || '');
           const channelWidth = iface['channel-width'] || '20mhz';
           const validChannels = getValidChannelsForWidth(channelWidth, bandType);
           const country = (iface as any)['country'] || 'no_country_set';
@@ -1046,7 +1082,7 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
             </Select>
           </div>
           <div className={styles.formGroup}>
-            <label className={styles.formLabel}>频段</label>
+            <label className={styles.formLabel}>物理协议</label>
             <Select
               value={iface.band || '2ghz-b/g/n'}
               onChange={(value) => updateField('band', value)}
@@ -1099,9 +1135,16 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
               style={{ width: '100%' }}
               showSearch
               placeholder="选择频率"
+              optionFilterProp="children"
             >
-              {getFrequencyOptions.map((opt) => (
-                <Option key={opt.value} value={opt.value}>{opt.label}</Option>
+              {getFrequencyOptions.map((opt: any) => (
+                <Option
+                  key={opt.value}
+                  value={opt.value}
+                  style={opt.isStandard ? { fontWeight: 700 } : undefined}
+                >
+                  {opt.label}
+                </Option>
               ))}
             </Select>
           </div>
@@ -1117,11 +1160,11 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
             />
           </div>
           <div className={styles.formGroup}>
-            <label className={styles.formLabel}>无线电名称</label>
+            <label className={styles.formLabel}>射频接口名称</label>
             <Input
               value={(iface as any)['radio-name'] || ''}
               onChange={(e) => updateField('radio-name', e.target.value)}
-              placeholder="无线电名称"
+              placeholder="射频接口名称"
             />
           </div>
         </div>
@@ -1151,7 +1194,7 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
         </div>
 
         <div className={styles.formRow}>
-          <div className={styles.formGroup}>
+          <div className={styles.formGroup} style={!['station', 'station-bridge', 'station-pseudobridge', 'station-wds'].includes(iface.mode || '') ? { maxWidth: 'calc(50% - 8px)' } : undefined}>
             <label className={styles.formLabel}>无线加密</label>
             <Select
               value={(iface as any)['security-profile'] || 'none'}
@@ -1166,8 +1209,40 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
               ))}
             </Select>
           </div>
-          <div className={styles.formGroup}>
-          </div>
+          {['station', 'station-bridge', 'station-pseudobridge', 'station-wds'].includes(iface.mode || '') && (
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel}>终端漫游</label>
+              <Select
+                value={(iface as any)['station-roaming'] || 'disabled'}
+                onChange={(value) => updateField('station-roaming', value)}
+                style={{ width: '100%' }}
+              >
+                <Option value="disabled">禁用</Option>
+                <Option value="enabled">启用</Option>
+              </Select>
+            </div>
+          )}
+        </div>
+
+        <div className={styles.checkboxInlineGroup}>
+          <Checkbox
+            checked={(iface as any)['default-authenticate'] === 'yes'}
+            onChange={(e) => updateField('default-authenticate', e.target.checked ? 'yes' : 'no')}
+          >
+            默认认证
+          </Checkbox>
+          <Checkbox
+            checked={(iface as any)['default-forwarding'] === 'yes'}
+            onChange={(e) => updateField('default-forwarding', e.target.checked ? 'yes' : 'no')}
+          >
+            默认转发
+          </Checkbox>
+          <Checkbox
+            checked={iface['hide-ssid'] === 'yes'}
+            onChange={(e) => updateField('hide-ssid', e.target.checked ? 'yes' : 'no')}
+          >
+            隐藏 SSID
+          </Checkbox>
         </div>
       </div>
 
@@ -1252,27 +1327,6 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
             />
           </div>
         </div>
-
-        <div className={styles.checkboxGroup}>
-          <Checkbox
-            checked={(iface as any)['default-authenticate'] === 'yes'}
-            onChange={(e) => updateField('default-authenticate', e.target.checked ? 'yes' : 'no')}
-          >
-            默认认证
-          </Checkbox>
-          <Checkbox
-            checked={(iface as any)['default-forwarding'] === 'yes'}
-            onChange={(e) => updateField('default-forwarding', e.target.checked ? 'yes' : 'no')}
-          >
-            默认转发
-          </Checkbox>
-          <Checkbox
-            checked={iface['hide-ssid'] === 'yes'}
-            onChange={(e) => updateField('hide-ssid', e.target.checked ? 'yes' : 'no')}
-          >
-            隐藏 SSID
-          </Checkbox>
-        </div>
         </>
         )}
       </div>
@@ -1336,7 +1390,7 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
           </Radio.Group>
         </div>
 
-        <div className={styles.rateSection} style={isRateDefault ? { opacity: 0.5, pointerEvents: 'none' } : undefined}>
+        <div className={styles.rateSection} style={isRateDefault ? { pointerEvents: 'none' } : undefined}>
           <div className={styles.rateRow}>
             <span className={styles.rateLabel}>B 支持速率:</span>
             <div className={styles.checkboxInlineGroup}>
@@ -1402,37 +1456,61 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
     );
   };
 
-  const renderAdvancedTab = () => (
+  const renderAdvancedTab = () => {
+    const isApMode = iface.mode === 'ap-bridge' || iface.mode === 'bridge';
+    return (
     <div className={styles.tabContent}>
       <div className={styles.formSection}>
         <h3 className={styles.sectionTitle}>距离与天线</h3>
         <div className={styles.formRow}>
+          {isApMode && (
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel}>区域</label>
+              <Input
+                value={(iface as any)['area'] || ''}
+                onChange={(e) => updateField('area', e.target.value)}
+                placeholder=""
+              />
+            </div>
+          )}
           <div className={styles.formGroup}>
-            <label className={styles.formLabel}>区域</label>
-            <Input
-              value={(iface as any)['area'] || ''}
-              onChange={(e) => updateField('area', e.target.value)}
-              placeholder="区域"
-            />
+            <label className={styles.formLabel}>距离优化</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {(() => {
+                // 英文值到中文显示的映射
+                const distanceValue = (iface as any)['distance'] || 'dynamic';
+                const distanceLabelMap: { [key: string]: string } = { dynamic: '自适应', indoors: '室内' };
+                // 显示值：英文选项显示中文，数字或其他值原样显示
+                const displayValue = distanceLabelMap[distanceValue] || distanceValue;
+                return (
+                  <AutoComplete
+                    value={displayValue}
+                    onChange={(value) => {
+                      // 中文显示值反向映射回英文值
+                      const reverseMap: { [key: string]: string } = { '自适应': 'dynamic', '室内': 'indoors' };
+                      updateField('distance', reverseMap[value] || value);
+                    }}
+                    style={{ flex: 1 }}
+                    filterOption={false}
+                    placeholder="自适应/室内 或输入数字"
+                  >
+                    <Option value="自适应">自适应</Option>
+                    <Option value="室内">室内</Option>
+                  </AutoComplete>
+                );
+              })()}
+              <span style={{ whiteSpace: 'nowrap', color: 'var(--color-text-primary)' }}>KM</span>
+            </div>
           </div>
+        </div>
+
+        <div className={styles.formRow}>
           <div className={styles.formGroup}>
             <label className={styles.formLabel}>最大站点数</label>
             <Input
               value={(iface as any)['max-station-count'] || '2007'}
               onChange={(e) => updateField('max-station-count', e.target.value)}
               placeholder="2007"
-            />
-          </div>
-        </div>
-
-        <div className={styles.formRow}>
-          <div className={styles.formGroup}>
-            <label className={styles.formLabel}>突发时间</label>
-            <Input
-              value={(iface as any)['burst-time'] || ''}
-              onChange={(e) => updateField('burst-time', e.target.value)}
-              placeholder="us"
-              addonAfter="us"
             />
           </div>
           <div className={styles.formGroup}>
@@ -1447,14 +1525,13 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
 
         <div className={styles.formRow}>
           <div className={styles.formGroup}>
-            <label className={styles.formLabel}>自适应噪声免疫</label>
+            <label className={styles.formLabel}>自适应噪声</label>
             <Select
               value={(iface as any)['adaptive-noise-immunity'] || 'none'}
               onChange={(value) => updateField('adaptive-noise-immunity', value)}
               style={{ width: '100%' }}
             >
               <Option value="none">无</Option>
-              <Option value="ap-mode">AP 模式</Option>
               <Option value="client-mode">客户端模式</Option>
               <Option value="ap-and-client-mode">AP 和客户端模式</Option>
             </Select>
@@ -1478,50 +1555,16 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
 
         <div className={styles.checkboxGroup}>
           <Checkbox
-            checked={(iface as any)['allow-shared-key'] === 'yes'}
-            onChange={(e) => updateField('allow-shared-key', e.target.checked ? 'yes' : 'no')}
+            checked={(iface as any)['allow-sharedkey'] === 'yes'}
+            onChange={(e) => updateField('allow-sharedkey', e.target.checked ? 'yes' : 'no')}
           >
             允许共享密钥
           </Checkbox>
         </div>
       </div>
-
-      <div className={styles.formSection}>
-        <h3 className={styles.sectionTitle}>超时与统计</h3>
-        <div className={styles.formRow}>
-          <div className={styles.formGroup}>
-            <label className={styles.formLabel}>断开超时</label>
-            <Input
-              value={(iface as any)['disconnect-timeout'] || '00:00:03'}
-              onChange={(e) => updateField('disconnect-timeout', e.target.value)}
-              placeholder="00:00:03"
-            />
-          </div>
-          <div className={styles.formGroup}>
-            <label className={styles.formLabel}>失败重试时间</label>
-            <Input
-              value={(iface as any)['on-fail-retry-time'] || '0.10'}
-              onChange={(e) => updateField('on-fail-retry-time', e.target.value)}
-              placeholder="0.10"
-              addonAfter="s"
-            />
-          </div>
-        </div>
-
-        <div className={styles.formRow}>
-          <div className={styles.formGroup}>
-            <label className={styles.formLabel}>更新统计间隔</label>
-            <Input
-              value={(iface as any)['update-stats-interval'] || ''}
-              onChange={(e) => updateField('update-stats-interval', e.target.value)}
-              placeholder="s"
-              addonAfter="s"
-            />
-          </div>
-        </div>
-      </div>
     </div>
-  );
+    );
+  };
 
   const renderTxPowerTab = () => {
     const txPowerMode = (iface as any)['tx-power-mode'] || 'default';
@@ -1572,6 +1615,402 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
     </div>
   );
 
+  // WDS 标签：参考 Winbox 中 WDS 标签栏
+  // 包含 wds-mode 和 wds-default-bridge（排除 wds-default-cost、wds-cost-range、wds-ignore-ssid）
+  const [wdsBridges, setWdsBridges] = useState<string[]>([]);
+  const [wdsBridgesLoaded, setWdsBridgesLoaded] = useState(false);
+
+  useEffect(() => {
+    if (activeTab !== 'wds' || wdsBridgesLoaded || !routerIp) return;
+    setWdsBridgesLoaded(true);
+    fetch(`/api/device/bridges`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip: routerIp }),
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'success' && Array.isArray(data.bridges)) {
+          setWdsBridges(data.bridges.map((b: any) => b.name || b['.id']).filter(Boolean));
+        }
+      })
+      .catch(() => {});
+  }, [activeTab, wdsBridgesLoaded, routerIp]);
+
+  const renderWDSTab = () => (
+    <div className={styles.tabContent}>
+      <div className={styles.formSection}>
+        <h3 className={styles.sectionTitle}>WDS 配置</h3>
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>WDS 模式</label>
+            <Select
+              value={iface['wds-mode'] || 'disabled'}
+              onChange={(value) => updateField('wds-mode', value)}
+              style={{ width: '100%' }}
+            >
+              <Option value="disabled">禁用</Option>
+              <Option value="static">静态</Option>
+              <Option value="dynamic">动态</Option>
+              <Option value="mesh">Mesh</Option>
+            </Select>
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>WDS 默认桥接</label>
+            <Select
+              value={iface['wds-default-bridge'] || 'none'}
+              onChange={(value) => updateField('wds-default-bridge', value)}
+              style={{ width: '100%' }}
+            >
+              <Option value="none">无</Option>
+              {wdsBridges.map(name => (
+                <Option key={name} value={name}>{name}</Option>
+              ))}
+            </Select>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Nstreme 标签：参考 Winbox 中 Nstreme 标签栏
+  // Nstreme 配置位于独立子菜单 /interface wireless nstreme
+  // 字段：enable-nstreme, enable-polling, disable-csma, framer-policy, framer-limit
+  const renderNstremeTab = () => (
+    <div className={styles.tabContent}>
+      <div className={styles.formSection}>
+        <h3 className={styles.sectionTitle}>Nstreme 配置</h3>
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>启用 Nstreme</label>
+            <Select
+              value={(iface as any)['enable-nstreme'] || 'no'}
+              onChange={(value) => updateField('enable-nstreme', value)}
+              style={{ width: '100%' }}
+            >
+              <Option value="no">否</Option>
+              <Option value="yes">是</Option>
+            </Select>
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>启用轮询</label>
+            <Select
+              value={(iface as any)['enable-polling'] || 'yes'}
+              onChange={(value) => updateField('enable-polling', value)}
+              style={{ width: '100%' }}
+            >
+              <Option value="no">否</Option>
+              <Option value="yes">是</Option>
+            </Select>
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>禁用 CSMA</label>
+            <Select
+              value={(iface as any)['disable-csma'] || 'no'}
+              onChange={(value) => updateField('disable-csma', value)}
+              style={{ width: '100%' }}
+            >
+              <Option value="no">否</Option>
+              <Option value="yes">是</Option>
+            </Select>
+          </div>
+        </div>
+      </div>
+
+      <div className={styles.formSection}>
+        <h3 className={styles.sectionTitle}>帧聚合</h3>
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>帧打包策略</label>
+            <Select
+              value={(iface as any)['framer-policy'] || 'none'}
+              onChange={(value) => updateField('framer-policy', value)}
+              style={{ width: '100%' }}
+            >
+              <Option value="none">none - 不打包</Option>
+              <Option value="best-fit">best-fit - 最佳匹配</Option>
+              <Option value="exact-size">exact-size - 精确大小</Option>
+              <Option value="dynamic-size">dynamic-size - 动态大小</Option>
+            </Select>
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>帧大小上限</label>
+            <Input
+              type="number"
+              value={(iface as any)['framer-limit'] ?? '3200'}
+              onChange={(e) => updateField('framer-limit', e.target.value)}
+              placeholder="3200"
+              min={0}
+              style={{ width: '100%' }}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // HT 标签：同步 winbox 中 HT 标签栏内容
+  const renderHTTab = () => {
+    // 解析 tx-chains / rx-chains 字符串为 Chain0/Chain1 勾选状态
+    const parseChains = (value: string): { chain0: boolean; chain1: boolean } => {
+      if (!value) return { chain0: true, chain1: false };
+      // 兼容逗号、分号、空格分隔
+      const nums = String(value).split(/[,;\s]+/).map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+      return {
+        chain0: nums.includes(0),
+        chain1: nums.includes(1),
+      };
+    };
+    const buildChains = (chain0: boolean, chain1: boolean): string => {
+      const nums: number[] = [];
+      if (chain0) nums.push(0);
+      if (chain1) nums.push(1);
+      return nums.join(',');
+    };
+    const txChains = parseChains((iface as any)['tx-chains'] || '');
+    const rxChains = parseChains((iface as any)['rx-chains'] || '');
+    return (
+    <div className={styles.tabContent}>
+      <div className={styles.formSection}>
+        <h3 className={styles.sectionTitle}>基本配置</h3>
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>保护间隔</label>
+            <Select
+              value={(iface as any)['guard-interval'] || 'any'}
+              onChange={(value) => updateField('guard-interval', value)}
+              style={{ width: '100%' }}
+            >
+              <Option value="any">任意</Option>
+              <Option value="long">长</Option>
+            </Select>
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>WMM 支持</label>
+            <Select
+              value={(iface as any)['wmm-support'] || 'disabled'}
+              onChange={(value) => updateField('wmm-support', value)}
+              style={{ width: '100%' }}
+            >
+              <Option value="disabled">禁用</Option>
+              <Option value="enabled">启用</Option>
+              <Option value="required">必需</Option>
+            </Select>
+          </div>
+        </div>
+
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>发射极化</label>
+            <div className={styles.checkboxInlineGroup}>
+              <Checkbox
+                checked={txChains.chain0}
+                onChange={(e) => updateField('tx-chains', buildChains(e.target.checked, txChains.chain1))}
+              >
+                Chain0
+              </Checkbox>
+              <Checkbox
+                checked={txChains.chain1}
+                onChange={(e) => updateField('tx-chains', buildChains(txChains.chain0, e.target.checked))}
+              >
+                Chain1
+              </Checkbox>
+            </div>
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>接收极化</label>
+            <div className={styles.checkboxInlineGroup}>
+              <Checkbox
+                checked={rxChains.chain0}
+                onChange={(e) => updateField('rx-chains', buildChains(e.target.checked, rxChains.chain1))}
+              >
+                Chain0
+              </Checkbox>
+              <Checkbox
+                checked={rxChains.chain1}
+                onChange={(e) => updateField('rx-chains', buildChains(rxChains.chain0, e.target.checked))}
+              >
+                Chain1
+              </Checkbox>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className={styles.formSection}>
+        <h3 className={styles.sectionTitle}>聚合</h3>
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>A-MPDU 优先级</label>
+            <Input
+              value={(iface as any)['ampdu-priorities'] || '0'}
+              onChange={(e) => updateField('ampdu-priorities', e.target.value)}
+              placeholder="如 0"
+            />
+          </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>A-MSDU 限制</label>
+            <Input
+              value={(iface as any)['amsdu-limit'] || '8192'}
+              onChange={(e) => updateField('amsdu-limit', e.target.value)}
+              placeholder="字节"
+              addonAfter="bytes"
+            />
+          </div>
+        </div>
+
+        <div className={styles.formRow}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>A-MSDU 阈值</label>
+            <Input
+              value={(iface as any)['amsdu-threshold'] || '8192'}
+              onChange={(e) => updateField('amsdu-threshold', e.target.value)}
+              placeholder="字节"
+              addonAfter="bytes"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+    );
+  };
+
+  // MCS 速率标签：Basic MCS / Supported MCS 勾选框
+  const renderMCSTab = () => {
+    // 速率集为 default 时，MCS 速率不可操作
+    const isRateDefault = ((iface as any)['rate-set'] || 'default') === 'default';
+    // Supported MCS: 0-23（802.11n/ac）
+    const supportedMcsList = Array.from({ length: 24 }, (_, i) => `mcs-${i}`);
+    // HT Basic MCS: 0-19（参考 Winbox，Basic MCS 最大到 mcs-19）
+    const basicMcsList = Array.from({ length: 20 }, (_, i) => `mcs-${i}`);
+
+    // 解析 MCS 字符串为 Set（兼容逗号和分号分隔符）
+    const parseMcs = (value: string): Set<string> => {
+      if (!value) return new Set();
+      return new Set(String(value).split(/[,;]/).map(s => s.trim()).filter(Boolean));
+    };
+
+    // 构建 MCS 字符串
+    const buildMcs = (mcsSet: Set<string>): string => {
+      return Array.from(mcsSet).sort((a, b) => {
+        const na = parseInt(a.replace('mcs-', ''), 10);
+        const nb = parseInt(b.replace('mcs-', ''), 10);
+        return na - nb;
+      }).join(','); // MikroTik API 使用逗号分隔
+    };
+
+    // Basic MCS：空值表示全部支持（与 Winbox 一致，默认全部勾选）
+    const basicMcsRaw = (iface as any)['ht-basic-mcs'] || '';
+    const basicMcsIsEmpty = basicMcsRaw === '';
+    const basicMcs = basicMcsIsEmpty
+      ? new Set(basicMcsList) // 空值表示支持全部，全部勾选
+      : parseMcs(basicMcsRaw);
+    // 支持 MCS：空值表示支持所有 MCS，此时所有项应显示为勾选状态
+    const supportedMcsRaw = (iface as any)['ht-supported-mcs'] || '';
+    const supportedMcsIsEmpty = supportedMcsRaw === '';
+    const supportedMcs = supportedMcsIsEmpty
+      ? new Set(supportedMcsList) // 空值表示支持全部，全部勾选
+      : parseMcs(supportedMcsRaw);
+
+    // 检查冲突：Basic MCS 必须是 Supported MCS 的子集
+    const checkConflict = (newBasic: Set<string>, newSupported: Set<string>): string | null => {
+      if (newSupported.size === 0) return null; // 空表示支持全部，不冲突
+      for (const mcs of newBasic) {
+        if (!newSupported.has(mcs)) {
+          return mcs;
+        }
+      }
+      return null;
+    };
+
+    // 切换 Basic MCS
+    const toggleBasic = (mcs: string, checked: boolean) => {
+      if (isRateDefault) return;
+      const newBasic = new Set(basicMcs);
+      if (checked) {
+        newBasic.add(mcs);
+      } else {
+        newBasic.delete(mcs);
+      }
+      const conflict = checkConflict(newBasic, supportedMcs);
+      if (conflict) {
+        Modal.warning({
+          title: 'MCS 速率冲突',
+          content: `${conflict} 在基本 MCS 中被勾选，但未在支持 MCS 中勾选。基本 MCS 必须是支持 MCS 的子集。请先在支持 MCS 中勾选 ${conflict}。`,
+        });
+        return;
+      }
+      // 若全部勾选，写空值表示支持全部；否则写实际值
+      if (newBasic.size === basicMcsList.length) {
+        updateField('ht-basic-mcs', '');
+      } else {
+        updateField('ht-basic-mcs', buildMcs(newBasic));
+      }
+    };
+
+    // 切换 Supported MCS
+    const toggleSupported = (mcs: string, checked: boolean) => {
+      if (isRateDefault) return;
+      const newSupported = new Set(supportedMcs);
+      if (checked) {
+        newSupported.add(mcs);
+      } else {
+        newSupported.delete(mcs);
+        const conflict = checkConflict(basicMcs, newSupported);
+        if (conflict) {
+          Modal.warning({
+            title: 'MCS 速率冲突',
+            content: `${conflict} 在基本 MCS 中已勾选，无法从支持 MCS 中移除。请先取消基本 MCS 中的 ${conflict}。`,
+          });
+          return;
+        }
+      }
+      if (newSupported.size === supportedMcsList.length) {
+        updateField('ht-supported-mcs', '');
+      } else {
+        updateField('ht-supported-mcs', buildMcs(newSupported));
+      }
+    };
+
+    return (
+      <div className={styles.tabContent} style={isRateDefault ? { pointerEvents: 'none' } : undefined}>
+        <div className={styles.formSection}>
+          <h3 className={styles.sectionTitle}>基本 MCS（客户端必须支持的基本速率）</h3>
+          <div className={styles.checkboxInlineGroup}>
+            {basicMcsList.map(mcs => (
+              <Checkbox
+                key={mcs}
+                checked={basicMcs.has(mcs)}
+                disabled={isRateDefault}
+                onChange={(e) => toggleBasic(mcs, e.target.checked)}
+                style={{ width: 90 }}
+              >
+                {mcs}
+              </Checkbox>
+            ))}
+          </div>
+        </div>
+
+        <div className={styles.formSection}>
+          <h3 className={styles.sectionTitle}>支持 MCS（AP 支持的传输速率）</h3>
+          <div className={styles.checkboxInlineGroup}>
+            {supportedMcsList.map(mcs => (
+              <Checkbox
+                key={mcs}
+                checked={supportedMcs.has(mcs)}
+                disabled={isRateDefault}
+                onChange={(e) => toggleSupported(mcs, e.target.checked)}
+                style={{ width: 90 }}
+              >
+                {mcs}
+              </Checkbox>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderTabContent = () => {
     switch (activeTab) {
       case 'general':
@@ -1583,11 +2022,13 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
       case 'advanced':
         return renderAdvancedTab();
       case 'ht':
-        return renderPlaceholderTab('HT');
+        return renderHTTab();
+      case 'mcs':
+        return renderMCSTab();
       case 'wds':
-        return renderPlaceholderTab('WDS');
+        return renderWDSTab();
       case 'nstreme':
-        return renderPlaceholderTab('Nstreme');
+        return renderNstremeTab();
       case 'txpower':
         return renderTxPowerTab();
       default:
@@ -1595,10 +2036,21 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
     }
   };
 
+  // MCS 速率仅在 802.11n/ac/ax 频段下有效
+  // 纯 802.11a/b/g 频段（无 n/ac/ax）无 MCS 速率，不显示 MCS 速率标签
+  const visibleTabs = tabs.filter(tab => {
+    if (tab.key === 'mcs') {
+      const band = (iface as any)['band'] || '';
+      // 包含 n、ac、ax 的频段才支持 MCS
+      if (!/n|ac|ax/.test(band)) return false;
+    }
+    return true;
+  });
+
   return (
     <div className={styles.container}>
       <div className={styles.tabBar}>
-        {tabs.map((tab) => (
+        {visibleTabs.map((tab) => (
           <button
             key={tab.key}
             className={`${styles.tabButton} ${activeTab === tab.key ? styles.tabButtonActive : ''}`}

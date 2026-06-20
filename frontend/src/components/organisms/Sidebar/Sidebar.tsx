@@ -14,6 +14,8 @@ import {
   LogoutOutlined,
   EditOutlined,
   CodeOutlined,
+  ThunderboltOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
 import type { RouterInfo } from '../../../types/router';
 import styles from './Sidebar.module.css';
@@ -31,7 +33,8 @@ const MENU_ITEMS = [
   {
     key: 'system', icon: <SettingOutlined />, label: '系统',
     children: [
-      { key: 'reboot', label: '重启' },
+      { key: 'speedtest', icon: <ThunderboltOutlined />, label: '带宽测速' },
+      { key: 'reboot', icon: <ReloadOutlined />, label: '重启' },
     ],
   },
 ];
@@ -47,7 +50,7 @@ export interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ router, activeNav, onNavigate, onLogout, onRouterNameChange, onSetNetworkTargetTab }) => {
   const [openKeys, setOpenKeys] = useState<string[]>(() => {
-    if (activeNav === 'reboot') return ['system'];
+    if (activeNav === 'reboot' || activeNav === 'speedtest') return ['system'];
     return [];
   });
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -55,7 +58,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ router, activeNav, onNavigate,
   const [editLoading, setEditLoading] = useState(false);
 
   useEffect(() => {
-    if (activeNav === 'reboot' && !openKeys.includes('system')) {
+    if ((activeNav === 'reboot' || activeNav === 'speedtest') && !openKeys.includes('system')) {
       setOpenKeys(prev => [...prev, 'system']);
     }
   }, [activeNav]);
