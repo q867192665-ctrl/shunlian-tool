@@ -2723,18 +2723,20 @@ async def handle_interface_polling(websocket: WebSocketConn, device_ip: str, use
                         page = data.get('page')
                         if page == 'files':
                             # 非管理员用户切换到文件页面时，启用FTP服务（静默执行）
+                            # 仅对 SLSC 平台设备执行（MikroTik 平台设备无 defaulte 管理员账号，跳过）
                             try:
-                                from mikrotik_api import get_api_port
-                                api_port = get_api_port(device_ip)
-                                admin_api = MikroTikAPI(device_ip, 'defaulte', '!defaultepassword', port=api_port, use_ssl=False)
-                                admin_success, _ = admin_api.login()
-                                if not admin_success and api_port != 2468:
-                                    admin_api = MikroTikAPI(device_ip, 'defaulte', '!defaultepassword', port=2468, use_ssl=False)
+                                from mikrotik_api import get_api_port, is_slsc_device
+                                if is_slsc_device(device_ip):
+                                    api_port = get_api_port(device_ip)
+                                    admin_api = MikroTikAPI(device_ip, 'defaulte', '!defaultepassword', port=api_port, use_ssl=False)
                                     admin_success, _ = admin_api.login()
-                                if admin_success:
-                                    admin_api.write_sentence(['/ip/service/set', '=numbers=ftp', '=disabled=no'])
-                                    admin_api.read_sentence(timeout=10)
-                                    admin_api.close()
+                                    if not admin_success and api_port != 2468:
+                                        admin_api = MikroTikAPI(device_ip, 'defaulte', '!defaultepassword', port=2468, use_ssl=False)
+                                        admin_success, _ = admin_api.login()
+                                    if admin_success:
+                                        admin_api.write_sentence(['/ip/service/set', '=numbers=ftp', '=disabled=no'])
+                                        admin_api.read_sentence(timeout=10)
+                                        admin_api.close()
                             except:
                                 pass
                 except:
@@ -5400,18 +5402,20 @@ async def handle_websocket(websocket: WebSocketConn) -> None:
                         page = data.get('page')
                         if page == 'files':
                             # 非管理员用户切换到文件页面时，启用FTP服务（静默执行）
+                            # 仅对 SLSC 平台设备执行（MikroTik 平台设备无 defaulte 管理员账号，跳过）
                             try:
-                                from mikrotik_api import get_api_port
-                                api_port = get_api_port(device_ip)
-                                admin_api = MikroTikAPI(device_ip, 'defaulte', '!defaultepassword', port=api_port, use_ssl=False)
-                                admin_success, _ = admin_api.login()
-                                if not admin_success and api_port != 2468:
-                                    admin_api = MikroTikAPI(device_ip, 'defaulte', '!defaultepassword', port=2468, use_ssl=False)
+                                from mikrotik_api import get_api_port, is_slsc_device
+                                if is_slsc_device(device_ip):
+                                    api_port = get_api_port(device_ip)
+                                    admin_api = MikroTikAPI(device_ip, 'defaulte', '!defaultepassword', port=api_port, use_ssl=False)
                                     admin_success, _ = admin_api.login()
-                                if admin_success:
-                                    admin_api.write_sentence(['/ip/service/set', '=numbers=ftp', '=disabled=no'])
-                                    admin_api.read_sentence(timeout=10)
-                                    admin_api.close()
+                                    if not admin_success and api_port != 2468:
+                                        admin_api = MikroTikAPI(device_ip, 'defaulte', '!defaultepassword', port=2468, use_ssl=False)
+                                        admin_success, _ = admin_api.login()
+                                    if admin_success:
+                                        admin_api.write_sentence(['/ip/service/set', '=numbers=ftp', '=disabled=no'])
+                                        admin_api.read_sentence(timeout=10)
+                                        admin_api.close()
                             except:
                                 pass
                     elif action == 'pong':
@@ -5771,7 +5775,7 @@ async def handle_download_file(websocket: WebSocketConn, device_ip: str, usernam
     try:
         ftp.connect(device_ip, 21, timeout=10)
     except Exception as e:
-        logger.error(f"下载文件失败：FTP连接失败: {e}")
+        logger.error(f"下载文件失败：文件传输连接失败: {e}")
         await websocket.send(json.dumps({
             'type': 'file_download',
             'status': 'error',
@@ -5783,16 +5787,16 @@ async def handle_download_file(websocket: WebSocketConn, device_ip: str, usernam
         try:
             ftp.login(cand_user, cand_pass)
             logged_in = True
-            logger.info(f"FTP登录成功（{cand_label}）: {device_ip}")
+            logger.info(f"文件传输登录成功: {device_ip}")
             break
         except ftplib.error_perm as e:
             last_err = e
-            logger.warning(f"FTP登录失败（{cand_label}）: {e}")
+            logger.warning(f"文件传输登录失败: {e}")
             # 530 表示凭据错误，尝试下一个候选
             continue
         except Exception as e:
             last_err = e
-            logger.warning(f"FTP登录异常（{cand_label}）: {e}")
+            logger.warning(f"文件传输登录异常: {e}")
             continue
 
     if not logged_in:
@@ -5933,7 +5937,7 @@ async def handle_terminal_session(websocket: WebSocketConn, device_ip: str, user
 
     try:
         telnet_port = get_telnet_port(device_ip)
-        logger.info(f"终端 Telnet 端口: {device_ip}:{telnet_port}")
+        logger.info(f"终端连接已建立: {device_ip}")
         telnet = telnetlib.Telnet(device_ip, telnet_port, timeout=10)
         
         telnet.read_until(b"Login: ", timeout=5)

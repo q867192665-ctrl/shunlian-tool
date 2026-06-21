@@ -21,6 +21,7 @@ import { FilePage } from './pages/FilePage/FilePage';
 import { SystemPage } from './pages/SystemPage/SystemPage';
 import { RebootPage } from './pages/RebootPage/RebootPage';
 import { SpeedTestPage } from './pages/SpeedTestPage/SpeedTestPage';
+import { FactoryResetPage } from './pages/FactoryResetPage/FactoryResetPage';
 import { TerminalPage } from './pages/TerminalPage/TerminalPage';
 import styles from './App.module.css';
 
@@ -94,6 +95,7 @@ const AppContent: React.FC = () => {
       case 'files': return <FilePage />;
       case 'terminal': return <TerminalPage />;
       case 'reboot': return <RebootPage />;
+      case 'factory-reset': return <FactoryResetPage />;
       default: return <div className={styles.placeholder}><h1>请选择菜单项</h1></div>;
     }
   };

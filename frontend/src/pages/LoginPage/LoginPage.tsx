@@ -27,6 +27,9 @@ export const LoginPage: React.FC = () => {
   const [debugModalVisible, setDebugModalVisible] = useState(false);
   // 调试模式仅当次会话有效：使用 sessionStorage，网页重开（关闭标签页/刷新）后自动失效
   const [debugModeEnabled, setDebugModeEnabled] = useState(() => sessionStorage.getItem('debugModeEnabled') === 'true');
+  // 兼容模式仅当次会话有效：使用 sessionStorage，网页重开（关闭标签页/刷新）后自动失效
+  // 启用后可搜索并登录 MikroTik 平台设备（使用 MikroTik 默认端口号，后台不登录管理员账号）
+  const [compatModeEnabled, setCompatModeEnabled] = useState(() => sessionStorage.getItem('compatModeEnabled') === 'true');
   const [contextMenu, setContextMenu] = useState<{ visible: boolean; x: number; y: number; device: DeviceInfo | null }>({ visible: false, x: 0, y: 0, device: null });
   const contextMenuRef = React.useRef<HTMLDivElement>(null);
   const themeDropdownRef = React.useRef<HTMLDivElement>(null);
@@ -208,7 +211,17 @@ export const LoginPage: React.FC = () => {
   const handleEnableDebugMode = () => {
     sessionStorage.setItem('debugModeEnabled', 'true');
     setDebugModeEnabled(true);
-    setDebugModalVisible(false);
+  };
+
+  // 启用/关闭兼容模式（仅当次会话有效，sessionStorage 在标签页关闭/刷新后自动清除）
+  const handleToggleCompatMode = () => {
+    const next = !compatModeEnabled;
+    if (next) {
+      sessionStorage.setItem('compatModeEnabled', 'true');
+    } else {
+      sessionStorage.removeItem('compatModeEnabled');
+    }
+    setCompatModeEnabled(next);
   };
 
   // 右键菜单处理
@@ -245,7 +258,9 @@ export const LoginPage: React.FC = () => {
 
   const filteredDevices = devices.filter(d => {
     const platform = (d['Platform'] || '').toString();
-    if (!platform.toUpperCase().includes('SLSC')) return false;
+    const isSlsc = platform.toUpperCase().includes('SLSC');
+    // 兼容模式启用时，同时显示 MikroTik 平台设备；否则仅显示 SLSC 平台设备
+    if (!isSlsc && !compatModeEnabled) return false;
     if (!search) return true;
     const s = search.toLowerCase();
     const identity = (d['Identity'] || d.identity || '').toString().toLowerCase();
@@ -436,29 +451,59 @@ export const LoginPage: React.FC = () => {
         downloadUrl={updateInfo.downloadUrl}
         onClose={() => setUpdateVisible(false)}
       />
-      {/* Alt+Shift+Z 调试模式激活弹窗 */}
+      {/* Alt+Shift+Z 高级选项弹窗 */}
       {debugModalVisible && (
         <div className={styles.debugOverlay} onClick={() => setDebugModalVisible(false)}>
           <div className={styles.debugModal} onClick={e => e.stopPropagation()}>
             <div className={styles.debugHeader}>
-              <h2 className={styles.debugTitle}>调试选项</h2>
+              <h2 className={styles.debugTitle}>高级选项</h2>
               <button className={styles.debugCloseBtn} onClick={() => setDebugModalVisible(false)}>✕</button>
             </div>
             <div className={styles.debugBody}>
-              <div className={styles.debugDesc}>
-                启用后，可在设备列表中右键单击设备调用英文调试工具。
-                <br />
-                该功能仅对当前会话有效，关闭或刷新页面后自动失效。
+              {/* 英文调试工具 */}
+              <div className={styles.debugOptionRow}>
+                <div className={styles.debugOptionInfo}>
+                  <div className={styles.debugOptionTitle}>英文调试工具</div>
+                  <div className={styles.debugDesc}>
+                    启用后，可在设备列表中右键单击设备调用英文调试工具。
+                    <br />
+                    该功能仅对当前会话有效，关闭或刷新页面后自动失效。
+                  </div>
+                  {debugModeEnabled && (
+                    <div className={styles.debugActiveBadge}>● 当前会话已启用</div>
+                  )}
+                </div>
+                <button
+                  className={`${styles.debugBtnPrimary} ${styles.debugBtnCompact}`}
+                  onClick={handleEnableDebugMode}
+                >
+                  {debugModeEnabled ? '重新启用' : '启用'}
+                </button>
               </div>
-              {debugModeEnabled && (
-                <div className={styles.debugActiveBadge}>● 当前会话已启用</div>
-              )}
+
+              {/* 兼容模式 */}
+              <div className={styles.debugOptionRow}>
+                <div className={styles.debugOptionInfo}>
+                  <div className={styles.debugOptionTitle}>兼容模式</div>
+                  <div className={styles.debugDesc}>
+                    启用后，可搜索并登录 MikroTik 平台设备，所有设备功能端口号均使用 MikroTik 默认端口（API 8728、Telnet 23、FTP 21 等），后台不会登录管理员账号。
+                    <br />
+                    该功能仅对当前会话有效，关闭或刷新页面后自动失效。
+                  </div>
+                  {compatModeEnabled && (
+                    <div className={styles.debugActiveBadge}>● 当前会话已启用</div>
+                  )}
+                </div>
+                <button
+                  className={`${styles.debugBtnPrimary} ${styles.debugBtnCompact}`}
+                  onClick={handleToggleCompatMode}
+                >
+                  {compatModeEnabled ? '关闭' : '启用'}
+                </button>
+              </div>
             </div>
             <div className={styles.debugFooter}>
-              <button className={styles.debugBtnSecondary} onClick={() => setDebugModalVisible(false)}>取消</button>
-              <button className={styles.debugBtnPrimary} onClick={handleEnableDebugMode}>
-                {debugModeEnabled ? '重新启用' : '启用英文调试工具'}
-              </button>
+              <button className={styles.debugBtnSecondary} onClick={() => setDebugModalVisible(false)}>关闭</button>
             </div>
           </div>
         </div>

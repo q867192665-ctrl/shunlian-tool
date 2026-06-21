@@ -605,7 +605,6 @@ class MikroTikAPI:
                 match = re.match(r'(\d+)\.', version_str)
                 if match:
                     self._routeros_major_version = int(match.group(1))
-                print(f"[版本] 系统版本: {version_str}, 主版本: {self._routeros_major_version}")
         except Exception as e:
             print(f"[版本] 获取版本失败: {e}")
 

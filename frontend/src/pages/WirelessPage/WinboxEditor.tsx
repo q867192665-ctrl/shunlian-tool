@@ -39,6 +39,7 @@ interface WinboxEditorProps {
   onChange: (iface: WirelessInterface) => void;
   routerIp?: string;
   securityProfiles?: SecurityProfileData[];
+  nlevel?: number | null;
 }
 
 const tabs = [
@@ -506,7 +507,7 @@ const countryFrequencyRules: { [key: string]: { channels24G: number[], channels5
   },
 };
 
-export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, onChange, routerIp, securityProfiles }) => {
+export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, onChange, routerIp, securityProfiles, nlevel }) => {
   const [activeTab, setActiveTab] = useState('wireless');
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
     'advanced': true,
@@ -1069,11 +1070,13 @@ export const WinboxEditor: React.FC<WinboxEditorProps> = ({ interface: iface, on
           <div className={styles.formGroup}>
             <label className={styles.formLabel}>模式</label>
             <Select
-              value={iface.mode || 'ap-bridge'}
+              value={iface.mode || (nlevel !== null && nlevel >= 4 ? 'ap-bridge' : 'station')}
               onChange={(value) => updateField('mode', value)}
               style={{ width: '100%' }}
             >
-              <Option value="ap-bridge">AP（点对多点）</Option>
+              {nlevel === null || nlevel >= 4 ? (
+                <Option value="ap-bridge">AP（点对多点）</Option>
+              ) : null}
               <Option value="bridge">PTP（点对点）</Option>
               <Option value="station">Station（标准三层）</Option>
               <Option value="station-bridge">Station（二层）</Option>

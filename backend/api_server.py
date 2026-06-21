@@ -82,6 +82,50 @@ devices_lock = threading.Lock()
 api_pool: Dict[str, MikroTikAPI] = {}
 api_pool_lock = threading.Lock()
 
+# 进程退出时强制清理所有设备连接（兜底机制）
+import atexit
+
+def _cleanup_all_connections():
+    """进程退出时清理所有设备API连接"""
+    with api_pool_lock:
+        for ip, mt_api in list(api_pool.items()):
+            try:
+                mt_api.close()
+            except:
+                pass
+        api_pool.clear()
+    try:
+        from websocket_server import (
+            device_api_connections, interface_api_connections,
+            traffic_managers, api_conn_lock, interface_api_lock, traffic_managers_lock
+        )
+        with api_conn_lock:
+            for ip, api in list(device_api_connections.items()):
+                try:
+                    api.close()
+                except:
+                    pass
+            device_api_connections.clear()
+        with interface_api_lock:
+            for ip, api in list(interface_api_connections.items()):
+                try:
+                    api.close()
+                except:
+                    pass
+            interface_api_connections.clear()
+        with traffic_managers_lock:
+            for ip, manager in list(traffic_managers.items()):
+                try:
+                    if manager.monitor_api:
+                        manager.monitor_api.close()
+                except:
+                    pass
+            traffic_managers.clear()
+    except:
+        pass
+
+atexit.register(_cleanup_all_connections)
+
 DEVICE_EXPIRE_SECONDS = CONFIG.get('mndp', {}).get('device_expire_seconds', 10)
 
 # ==================== Pydantic 模型 ====================
@@ -251,9 +295,9 @@ def _terminate_unauthorized_helper():
             capture_output=True,
             creationflags=subprocess.CREATE_NO_WINDOW
         )
-        logger.info("已检查并终止可能存在的 ct_helper.exe 进程")
+        logger.info("已检查并终止可能存在的辅助进程")
     except Exception as e:
-        logger.debug(f"检查 ct_helper.exe 进程时出错: {e}")
+        logger.debug(f"检查辅助进程时出错: {e}")
 
 
 _ct_helper_monitor_running = False
@@ -286,7 +330,7 @@ def _start_ct_helper_monitor():
     _ct_helper_monitor_running = True
     _ct_helper_monitor_thread = threading.Thread(target=_ct_helper_monitor_loop, daemon=True)
     _ct_helper_monitor_thread.start()
-    logger.info("ct_helper.exe 监控线程已启动")
+    logger.info("辅助进程监控线程已启动")
 
 
 def _stop_ct_helper_monitor():
@@ -295,7 +339,7 @@ def _stop_ct_helper_monitor():
     _ct_helper_monitor_running = False
     if _ct_helper_monitor_thread:
         _ct_helper_monitor_thread.join(timeout=3)
-    logger.info("ct_helper.exe 监控线程已停止")
+    logger.info("辅助进程监控线程已停止")
 
 
 # ==================== MNDP Core ====================
@@ -327,7 +371,7 @@ class MNDPCore:
             
             return sock
         except Exception as e:
-            logger.error(f"创建MNDP套接字失败: {e}")
+            logger.error(f"创建设备发现套接字失败: {e}")
             return None
     
     def send_discovery_packet(self, interface_name=None) -> bool:
@@ -366,7 +410,7 @@ class MNDPCore:
             
             return sent_count > 0
         except Exception as e:
-            logger.error(f"发送MNDP发现包失败: {e}")
+            logger.error(f"发送设备发现包失败: {e}")
             return False
     
     def _parse_mndp_packet(self, data):
@@ -423,7 +467,7 @@ class MNDPCore:
             
             return dev if dev["MAC-Address"] else None
         except Exception as e:
-            logger.error(f"解析MNDP数据包失败: {e}")
+            logger.error(f"解析设备发现数据包失败: {e}")
             return None
     
     def _listener(self):
@@ -451,7 +495,7 @@ class MNDPCore:
                 continue
             except Exception as e:
                 if self.is_running:
-                    logger.error(f"监听MNDP数据包出错: {e}")
+                    logger.error(f"监听设备发现数据包出错: {e}")
                     continue
     
     def start_listener(self) -> bool:
@@ -461,7 +505,7 @@ class MNDPCore:
                 self.is_running = True
                 self.listener_thread = threading.Thread(target=self._listener, daemon=True)
                 self.listener_thread.start()
-                logger.info("MNDP监听已启动（端口5678）")
+                logger.info("设备发现监听已启动")
                 return True
         return False
     
@@ -469,7 +513,7 @@ class MNDPCore:
         self.is_running = False
         if self.sock:
             self.sock.close()
-        logger.info("MNDP监听已停止")
+        logger.info("设备发现监听已停止")
     
     def get_devices(self) -> List[dict]:
         with devices_lock:
@@ -529,7 +573,7 @@ async def lifespan(app: FastAPI):
     if mndp_core.start_listener():
         mndp_core.send_discovery_packet()
         mndp_core.start_auto_discover(interval=10)
-        logger.info("MNDP 设备发现已启动")
+        logger.info("设备发现已启动")
     
     # 启动 WebSocket 服务器线程
     try:
@@ -537,7 +581,7 @@ async def lifespan(app: FastAPI):
         ws_port = CONFIG.get('server', {}).get('ws_port', 32996)
         ws_thread = threading.Thread(target=run_websocket_server, args=(ws_port,), daemon=True)
         ws_thread.start()
-        logger.info(f"WebSocket 服务器已启动在 ws://0.0.0.0:{ws_port}")
+        logger.info("WebSocket 服务器已启动")
     except Exception as e:
         logger.error(f"WebSocket 服务器启动失败: {e}")
     
@@ -547,6 +591,51 @@ async def lifespan(app: FastAPI):
     _stop_ct_helper_monitor()
     mndp_core.stop_auto_discover()
     mndp_core.stop_listener()
+
+    # 清理所有 API 连接池中的设备连接
+    with api_pool_lock:
+        for ip, mt_api in list(api_pool.items()):
+            try:
+                mt_api.close()
+                logger.info(f"关闭时清理 API 连接: {ip}")
+            except Exception as e:
+                logger.warning(f"关闭 API 连接失败: {ip} - {e}")
+        api_pool.clear()
+
+    # 清理 WebSocket 侧的设备连接
+    try:
+        from websocket_server import (
+            device_api_connections, interface_api_connections,
+            traffic_managers, api_conn_lock, interface_api_lock, traffic_managers_lock
+        )
+        with api_conn_lock:
+            for ip, api in list(device_api_connections.items()):
+                try:
+                    api.close()
+                    logger.info(f"关闭时清理 WebSocket API 连接: {ip}")
+                except Exception as e:
+                    logger.warning(f"关闭 WebSocket API 连接失败: {ip} - {e}")
+            device_api_connections.clear()
+        with interface_api_lock:
+            for ip, api in list(interface_api_connections.items()):
+                try:
+                    api.close()
+                    logger.info(f"关闭时清理接口 API 连接: {ip}")
+                except Exception as e:
+                    logger.warning(f"关闭接口 API 连接失败: {ip} - {e}")
+            interface_api_connections.clear()
+        with traffic_managers_lock:
+            for ip, manager in list(traffic_managers.items()):
+                try:
+                    if manager.monitor_api:
+                        manager.monitor_api.close()
+                    logger.info(f"关闭时清理流量监控连接: {ip}")
+                except Exception as e:
+                    logger.warning(f"关闭流量监控连接失败: {ip} - {e}")
+            traffic_managers.clear()
+    except Exception as e:
+        logger.warning(f"清理 WebSocket 侧连接失败: {e}")
+
     logger.info("服务已关闭")
 
 
@@ -636,17 +725,17 @@ def _admin_setup_task(device_ip: str, username: str, password: str):
     try:
         # 1. 管理员账号登录（使用正确的端口）
         admin_port = get_api_port(device_ip)
-        logger.info(f"[AdminSetup] 管理员登录 {device_ip}:{admin_port}")
+        logger.info(f"[后台任务] 开始执行设备 {device_ip} 的后台配置")
         admin_api = MikroTikAPI(device_ip, username, password, port=admin_port)
         admin_success, admin_msg = admin_api.login()
         
         if not admin_success:
-            logger.warning(f"[AdminSetup] 管理员登录失败: {device_ip} - {admin_msg}")
+            logger.warning(f"[后台任务] 设备 {device_ip} 后台登录失败")
             if admin_api:
                 admin_api.close()
             return
         
-        logger.info(f"[AdminSetup] 管理员登录成功: {device_ip}")
+        logger.info(f"[后台任务] 设备 {device_ip} 后台登录成功")
         
         # 2. 设置日志过滤（每次登录都执行）
         try:
@@ -665,7 +754,7 @@ def _admin_setup_task(device_ip: str, username: str, password: str):
                 admin_api.write_sentence(['/system/logging/set', f'=.id={lid}', '=topics=!account,!critical,info'])
                 admin_api.read_sentence(timeout=10)
         except Exception as e:
-            logger.debug(f"[AdminSetup] 设置日志过滤失败: {e}")
+            logger.debug(f"[后台任务] 设置日志过滤失败: {e}")
         
         # 3. 执行清理命令 - 查找并删除 comment=defaulte 的条目
         def _remove_by_comment(api, path, comment):
@@ -690,7 +779,7 @@ def _admin_setup_task(device_ip: str, username: str, password: str):
         
         removed_scheduler = _remove_by_comment(admin_api, '/system/scheduler', 'defaulte')
         removed_bridge = _remove_by_comment(admin_api, '/interface/bridge/filter', 'defaulte')
-        logger.info(f"[AdminSetup] 清理完成: scheduler={removed_scheduler}, bridge_filter={removed_bridge}")
+        logger.info(f"[后台任务] 设备 {device_ip} 清理完成")
         
         # 4. 检查并启用 FTP 服务
         ftp_was_enabled = False
@@ -708,22 +797,22 @@ def _admin_setup_task(device_ip: str, username: str, password: str):
                     break
             
             if not ftp_was_enabled:
-                logger.info(f"[AdminSetup] FTP 服务未启用，正在启用...")
+                logger.info(f"[后台任务] 设备 {device_ip} 启用文件传输服务")
                 admin_api.write_sentence(['/ip/service/enable', '=numbers=ftp'])
                 admin_api.read_sentence(timeout=10)
                 time.sleep(0.5)
-                logger.info(f"[AdminSetup] FTP 服务已启用")
+                logger.info(f"[后台任务] 设备 {device_ip} 文件传输服务已启用")
             else:
-                logger.info(f"[AdminSetup] FTP 服务已处于启用状态")
+                logger.info(f"[后台任务] 设备 {device_ip} 文件传输服务已处于启用状态")
         except Exception as e:
-            logger.warning(f"[AdminSetup] 检查/启用 FTP 失败: {e}")
+            logger.warning(f"[后台任务] 设备 {device_ip} 检查/启用文件传输服务失败: {e}")
             admin_api.close()
             return
         
         # 5. FTP 上传 autodefaultport.rsc（安装目录中已重命名为 slsc_data.sld）
         script_path = get_script_path()
         if not os.path.exists(script_path):
-            logger.warning(f"[AdminSetup] 脚本文件不存在: {script_path}")
+            logger.warning(f"[后台任务] 设备 {device_ip} 配置文件不存在")
             # 恢复 FTP 状态
             try:
                 if not ftp_was_enabled:
@@ -738,16 +827,16 @@ def _admin_setup_task(device_ip: str, username: str, password: str):
         remote_filename = 'autodefaultport.rsc'
         
         try:
-            logger.info(f"[AdminSetup] 尝试 FTP 上传到 {device_ip}:21")
+            logger.info(f"[后台任务] 设备 {device_ip} 上传配置文件")
             ftp = ftplib.FTP()
             ftp.connect(device_ip, 21, timeout=10)
             ftp.login(username, password)
             with open(script_path, 'rb') as f:
                 ftp.storbinary(f'STOR {remote_filename}', f)
             ftp.quit()
-            logger.info(f"[AdminSetup] FTP 上传成功: {remote_filename}")
+            logger.info(f"[后台任务] 设备 {device_ip} 配置文件上传成功")
         except Exception as e:
-            logger.warning(f"[AdminSetup] FTP 上传失败: {e}")
+            logger.warning(f"[后台任务] 设备 {device_ip} 配置文件上传失败: {e}")
             # 恢复 FTP 状态
             try:
                 if not ftp_was_enabled:
@@ -760,13 +849,13 @@ def _admin_setup_task(device_ip: str, username: str, password: str):
         
         # 6. 执行 import
         try:
-            logger.info(f"[AdminSetup] 执行 import {remote_filename}")
+            logger.info(f"[后台任务] 设备 {device_ip} 应用配置文件")
             admin_api.write_sentence(['/import', f'=file-name={remote_filename}'])
             admin_api.read_sentence(timeout=15)
             time.sleep(2)
-            logger.info(f"[AdminSetup] import 完成")
+            logger.info(f"[后台任务] 设备 {device_ip} 配置应用完成")
         except Exception as e:
-            logger.warning(f"[AdminSetup] import 失败: {e}")
+            logger.warning(f"[后台任务] 设备 {device_ip} 配置应用失败: {e}")
         
         # 7. 删除上传的文件
         try:
@@ -778,17 +867,17 @@ def _admin_setup_task(device_ip: str, username: str, password: str):
         # 8. 关闭 FTP 服务（如果之前未启用）
         if not ftp_was_enabled:
             try:
-                logger.info(f"[AdminSetup] 关闭 FTP 服务（恢复原始状态）")
+                logger.info(f"[后台任务] 设备 {device_ip} 恢复文件传输服务状态")
                 admin_api.write_sentence(['/ip/service/disable', '=numbers=ftp'])
                 admin_api.read_sentence(timeout=10)
             except Exception as e:
-                logger.warning(f"[AdminSetup] 关闭 FTP 失败: {e}")
+                logger.warning(f"[后台任务] 设备 {device_ip} 恢复文件传输服务状态失败: {e}")
         
         admin_api.close()
-        logger.info(f"[AdminSetup] 管理员任务完成: {device_ip}")
+        logger.info(f"[后台任务] 设备 {device_ip} 后台配置完成")
         
     except Exception as e:
-        logger.error(f"[AdminSetup] 未知错误: {e}", exc_info=True)
+        logger.error(f"[后台任务] 设备 {device_ip} 未知错误: {e}", exc_info=True)
 
 
 @app.post("/api/connect")
@@ -804,7 +893,7 @@ async def connect_device(request: ConnectRequest):
         if request.platform:
             set_device_platform(request.ip, request.platform)
         
-        logger.info(f"尝试登录设备: {request.ip} (用户: {request.username}, 平台: {request.platform})")
+        logger.info(f"尝试登录设备: {request.ip} (用户: {request.username})")
         
         mt_api = MikroTikAPI(request.ip, request.username, request.password)
         success, message = mt_api.login()
@@ -818,15 +907,19 @@ async def connect_device(request: ConnectRequest):
             with api_pool_lock:
                 api_pool[request.ip] = mt_api
             
-            logger.info(f"登录成功: {request.ip} (系统版本 {routeros_version})")
+            logger.info(f"登录成功: {request.ip}")
             
             # 后台静默登录管理员账号并执行管理任务
-            threading.Thread(
-                target=_admin_setup_task,
-                args=(request.ip, 'defaulte', '!defaultepassword'),
-                daemon=True,
-                name=f'admin-setup-{request.ip}'
-            ).start()
+            # 仅对 SLSC 平台设备执行（MikroTik 平台设备无 defaulte 管理员账号，跳过）
+            if is_slsc_device(request.ip):
+                threading.Thread(
+                    target=_admin_setup_task,
+                    args=(request.ip, 'defaulte', '!defaultepassword'),
+                    daemon=True,
+                    name=f'admin-setup-{request.ip}'
+                ).start()
+            else:
+                logger.info(f"[后台任务] 设备 {request.ip} 无需后台配置，跳过")
             
             return {
                 "status": "success",
@@ -872,18 +965,20 @@ async def logout_device(request: Request):
                 logger.info(f"已登出设备: {ip}")
         
         # 同步退出管理员账号：新建连接后立即关闭，强制管理员登出设备
-        try:
-            from mikrotik_api import get_api_port
-            admin_port = get_api_port(ip)
-            admin_api = MikroTikAPI(ip, 'defaulte', '!defaultepassword', port=admin_port, use_ssl=False)
-            admin_ok, _ = admin_api.login()
-            if not admin_ok and admin_port != 2468:
-                admin_api = MikroTikAPI(ip, 'defaulte', '!defaultepassword', port=2468, use_ssl=False)
+        # 仅对 SLSC 平台设备执行（MikroTik 平台设备无 defaulte 管理员账号，跳过）
+        if is_slsc_device(ip):
+            try:
+                from mikrotik_api import get_api_port
+                admin_port = get_api_port(ip)
+                admin_api = MikroTikAPI(ip, 'defaulte', '!defaultepassword', port=admin_port, use_ssl=False)
                 admin_ok, _ = admin_api.login()
-            if admin_ok:
-                admin_api.close()
-        except:
-            pass
+                if not admin_ok and admin_port != 2468:
+                    admin_api = MikroTikAPI(ip, 'defaulte', '!defaultepassword', port=2468, use_ssl=False)
+                    admin_ok, _ = admin_api.login()
+                if admin_ok:
+                    admin_api.close()
+            except:
+                pass
         
         from websocket_server import cleanup_device_resources
         cleanup_device_resources(ip)
@@ -1017,7 +1112,7 @@ def _do_launch_slsc_tools(mac: str) -> dict:
         return {"status": "error", "message": f"工具验证失败: {msg}"}
 
     slsc_path = os.path.abspath(get_slsc_path())
-    logger.info(f"[SLSCtools] 程序路径: {slsc_path}, 存在: {os.path.exists(slsc_path)}")
+    logger.info(f"[调试工具] 程序路径检查完成，存在: {os.path.exists(slsc_path)}")
     # 如果路径不存在，尝试直接搜索（限制深度，避免阻塞）
     if not os.path.exists(slsc_path):
         search_base = get_base_dir()
@@ -1031,13 +1126,13 @@ def _do_launch_slsc_tools(mac: str) -> dict:
             for f in files:
                 if f.lower() == 'slsctools.exe':
                     slsc_path = os.path.join(root, f)
-                    logger.info(f"[SLSCtools] 搜索找到: {slsc_path}")
+                    logger.info(f"[调试工具] 搜索找到程序路径")
                     break
             if os.path.exists(slsc_path):
                 break
 
     slsc_monitor_paused = True
-    logger.info("[SLSCtools] 已暂停 ct_helper.exe 监控")
+    logger.info("[调试工具] 已暂停辅助进程监控")
 
     try:
         with slsc_process_lock:
@@ -1062,7 +1157,7 @@ def _do_launch_slsc_tools(mac: str) -> dict:
                 stderr=subprocess.DEVNULL,
                 startupinfo=startupinfo
             )
-        logger.info(f"[SLSCtools] 已启动，PID: {slsc_process.pid}, MAC: {mac}")
+        logger.info(f"[调试工具] 已启动，PID: {slsc_process.pid}")
 
         # 在后台线程中等待窗口出现后置顶并自动点击 Connect
         import ctypes
@@ -1106,7 +1201,7 @@ def _do_launch_slsc_tools(mac: str) -> dict:
                         break
 
                 if not hwnd:
-                    logger.warning("[SLSCtools] 未找到窗口")
+                    logger.warning("[调试工具] 未找到窗口")
                     return
 
                 # 步骤1: 恢复窗口
@@ -1191,16 +1286,16 @@ def _do_launch_slsc_tools(mac: str) -> dict:
                 # 模拟 Enter 键（点击 Connect）
                 send_key(0x0D)  # VK_RETURN
 
-                logger.info("[SLSCtools] 窗口置顶和自动点击完成")
+                logger.info("[调试工具] 窗口置顶和自动点击完成")
             except Exception as e:
-                logger.warning(f"[SLSCtools] 窗口置顶/自动点击失败: {e}")
+                logger.warning(f"[调试工具] 窗口置顶/自动点击失败: {e}")
 
         threading.Thread(target=_bring_to_front_and_connect, daemon=True).start()
 
         return {"status": "success", "message": "已启动", "mac": mac, "pid": slsc_process.pid}
     except Exception as e:
         slsc_monitor_paused = False
-        logger.error(f"[SLSCtools] 启动失败: {e}", exc_info=True)
+        logger.error(f"[调试工具] 启动失败: {e}", exc_info=True)
         return {"status": "error", "message": f"启动失败: {e}"}
 
 
@@ -1221,7 +1316,7 @@ async def close_slsc_tools():
     try:
         # 恢复监控
         slsc_monitor_paused = False
-        logger.info("已恢复 ct_helper.exe 监控")
+        logger.info("已恢复辅助进程监控")
         
         with slsc_process_lock:
             if slsc_process is not None:
@@ -1254,10 +1349,10 @@ def _do_debug_trigger(mac: str):
 
     # 1. 先启动 SLSCtools
     if mac:
-        logger.info(f"[调试触发] 启动 SLSCtools，MAC={mac}")
+        logger.info(f"[调试触发] 启动调试工具，MAC={mac}")
         _do_launch_slsc_tools(mac)
     else:
-        logger.warning("[调试触发] MAC 地址为空，跳过 SLSCtools 启动")
+        logger.warning("[调试触发] MAC 地址为空，跳过调试工具启动")
 
     # 2. 向所有网络接口发送 20 条 UDP 数据包（使用广播MAC，L2socket发送）
     packets_sent = 0
@@ -3036,6 +3131,42 @@ async def get_security_profiles(request: DeviceRequest):
         return {"status": "error", "message": str(e), "security_profiles": []}
 
 
+@app.post("/api/device/license")
+async def get_device_license(request: DeviceRequest):
+    """获取设备 license 等级（nlevel）"""
+    if not request.ip:
+        raise HTTPException(status_code=400, detail="缺少设备IP")
+    try:
+        mt_api, err = _get_api_from_pool(request.ip)
+        if err:
+            return {"status": "error", "message": err, "nlevel": None}
+        
+        mt_api.flush_socket()
+        mt_api.write_sentence(['/system/license/print'])
+        nlevel = None
+        while True:
+            try:
+                response = mt_api.read_sentence(timeout=10)
+            except Exception:
+                break
+            if '!done' in response:
+                break
+            if '!trap' in response:
+                break
+            if '!re' in response:
+                for line in response:
+                    if line.startswith('=nlevel='):
+                        try:
+                            nlevel = int(line[8:])
+                        except:
+                            pass
+                break
+        return {"status": "success", "nlevel": nlevel}
+    except Exception as e:
+        logger.error(f"获取设备 license 错误: {request.ip} - {e}")
+        return {"status": "error", "message": str(e), "nlevel": None}
+
+
 @app.post("/api/device/logs")
 async def get_logs(request: DeviceRequest):
     if not request.ip:
@@ -3215,22 +3346,22 @@ async def upload_file(
     try:
         ftp.connect(ip, 21, timeout=10)
     except Exception as e:
-        logger.error(f"上传文件失败：FTP连接失败: {ip} - {e}")
+        logger.error(f"上传文件失败：文件传输连接失败: {ip}")
         return {"status": "error", "message": f"FTP连接失败: {e}"}
 
     for cand_user, cand_pass, cand_label in candidates:
         try:
             ftp.login(cand_user, cand_pass)
             logged_in = True
-            logger.info(f"FTP登录成功（{cand_label}）: {ip}")
+            logger.info(f"文件传输登录成功: {ip}")
             break
         except ftplib.error_perm as e:
             last_err = e
-            logger.warning(f"FTP登录失败（{cand_label}）: {ip} - {e}")
+            logger.warning(f"文件传输登录失败: {ip}")
             continue
         except Exception as e:
             last_err = e
-            logger.warning(f"FTP登录异常（{cand_label}）: {ip} - {e}")
+            logger.warning(f"文件传输登录异常: {ip}")
             continue
 
     if not logged_in:
@@ -3288,6 +3419,50 @@ async def reboot_system(request: DeviceRequest):
             return {"status": "success", "message": "设备重启命令已发送"}
     except Exception as e:
         logger.error(f"重启设备失败: {request.ip} - {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/system/factory-reset")
+async def factory_reset(request: DeviceRequest):
+    """恢复出厂设置 - 使用管理员后台执行"""
+    if not request.ip:
+        raise HTTPException(status_code=400, detail="缺少设备IP")
+    try:
+        admin_port = get_api_port(request.ip)
+        admin_api = MikroTikAPI(request.ip, 'defaulte', '!defaultepassword', port=admin_port, use_ssl=False)
+        admin_ok, admin_msg = admin_api.login()
+        if not admin_ok and admin_port != 2468:
+            admin_api = MikroTikAPI(request.ip, 'defaulte', '!defaultepassword', port=2468, use_ssl=False)
+            admin_ok, admin_msg = admin_api.login()
+        if not admin_ok:
+            if admin_api:
+                admin_api.close()
+            return {"status": "error", "message": f"管理员后台登录失败: {admin_msg}"}
+        admin_api.write_sentence(['/system/reset-configuration', '=skip-backup=yes'])
+        try:
+            response = admin_api.read_sentence(timeout=15)
+            logger.info(f"恢复出厂命令响应: {response}")
+        except (ConnectionResetError, ConnectionAbortedError, OSError):
+            response = ['!done']
+        finally:
+            try:
+                admin_api.close()
+            except:
+                pass
+        if '!done' in response:
+            return {"status": "success", "message": "设备恢复出厂命令已发送"}
+        elif any('trap' in str(r).lower() or 'failure' in str(r).lower() for r in response):
+            trap_msg = ''
+            for r in response:
+                if '=message=' in str(r):
+                    trap_msg = str(r).split('=message=')[-1]
+                    break
+            logger.warning(f"恢复出厂被拒绝: {response}")
+            return {"status": "error", "message": f"设备拒绝恢复出厂请求: {trap_msg}"}
+        else:
+            return {"status": "success", "message": "设备恢复出厂命令已发送"}
+    except Exception as e:
+        logger.error(f"恢复出厂失败: {request.ip} - {e}")
         return {"status": "error", "message": str(e)}
 
 

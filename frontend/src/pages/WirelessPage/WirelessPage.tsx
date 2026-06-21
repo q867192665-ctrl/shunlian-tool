@@ -90,6 +90,7 @@ export const WirelessPage: React.FC = () => {
   const [interfaces, setInterfaces] = useState<WirelessInterface[]>([]);
   const [clients, setClients] = useState<WirelessClient[]>([]);
   const [profiles, setProfiles] = useState<SecurityProfile[]>([]);
+  const [nlevel, setNlevel] = useState<number | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -235,7 +236,7 @@ export const WirelessPage: React.FC = () => {
   const fetchAllData = useCallback(async () => {
     if (!routerIp) return;
     try {
-      const [ifaceResp, clientResp, profileResp] = await Promise.all([
+      const [ifaceResp, clientResp, profileResp, licenseResp] = await Promise.all([
         fetch(`/api/wireless-interfaces?ip=${encodeURIComponent(routerIp)}`),
         fetch('/api/device/wireless-clients', {
           method: 'POST',
@@ -243,6 +244,11 @@ export const WirelessPage: React.FC = () => {
           body: JSON.stringify({ ip: routerIp }),
         }),
         fetch('/api/device/security-profiles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ip: routerIp }),
+        }),
+        fetch('/api/device/license', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ip: routerIp }),
@@ -259,6 +265,10 @@ export const WirelessPage: React.FC = () => {
       const profileData = await profileResp.json();
       if (profileData.status === 'success' && profileData.security_profiles) {
         setProfiles(profileData.security_profiles);
+      }
+      const licenseData = await licenseResp.json();
+      if (licenseData.status === 'success') {
+        setNlevel(licenseData.nlevel);
       }
       setInitialLoading(false);
       setError(null);
@@ -1411,6 +1421,7 @@ export const WirelessPage: React.FC = () => {
                   onChange={setEditingInterface}
                   routerIp={routerIp}
                   securityProfiles={securityProfiles}
+                  nlevel={nlevel}
                 />
               )}
             </Modal>

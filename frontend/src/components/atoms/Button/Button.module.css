@@ -12,6 +12,9 @@
 .primary { background-color: var(--color-accent-primary); border-color: var(--color-accent-primary); color: var(--color-text-primary); }
 .primary:hover { background-color: #4c5fd7; border-color: #4c5fd7; }
 .secondary { background-color: transparent; border-color: var(--color-border-primary); }
+.danger { background-color: #dc3545; border-color: #dc3545; color: #ffffff; }
+.danger:hover { background-color: #c82333; border-color: #c82333; }
+.danger:disabled { opacity: 0.5; }
 .small { height: var(--size-button-sm); padding: var(--space-xs) var(--space-md); font-size: var(--font-size-xs); }
 .medium { height: var(--size-input); }
 .large { height: var(--size-button-lg); }

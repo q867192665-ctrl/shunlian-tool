@@ -16,6 +16,7 @@ import {
   CodeOutlined,
   ThunderboltOutlined,
   ReloadOutlined,
+  UndoOutlined,
 } from '@ant-design/icons';
 import type { RouterInfo } from '../../../types/router';
 import styles from './Sidebar.module.css';
@@ -35,6 +36,7 @@ const MENU_ITEMS = [
     children: [
       { key: 'speedtest', icon: <ThunderboltOutlined />, label: '带宽测速' },
       { key: 'reboot', icon: <ReloadOutlined />, label: '重启' },
+      { key: 'factory-reset', icon: <UndoOutlined />, label: '恢复出厂' },
     ],
   },
 ];
