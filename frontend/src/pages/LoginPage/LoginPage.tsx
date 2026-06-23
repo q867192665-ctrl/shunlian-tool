@@ -200,6 +200,12 @@ export const LoginPage: React.FC = () => {
         } else if (msg.includes('password') || msg.includes('auth') || msg.includes('credential') || msg.includes('用户名或密码')) {
           errorMsg = '用户名或密码错误';
         }
+        
+        // 添加诊断信息
+        if (result.diagnosis && result.diagnosis.message) {
+          errorMsg += '\n\n' + result.diagnosis.message;
+        }
+        
         setError(errorMsg);
       }
     } catch (e: any) {

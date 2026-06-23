@@ -934,7 +934,139 @@ async def connect_device(request: ConnectRequest):
             if mt_api:
                 mt_api.close()
             logger.warning(f"登录失败: {request.ip} - {message}")
-            return {"status": "error", "message": message, "ip": request.ip, "username": request.username}
+            
+            # 登录失败时进行网络诊断
+            diagnosis_info = None
+            try:
+                # 1. 通过ARP检查网卡连通性
+                import ctypes
+                from ctypes import wintypes, byref
+                import ipaddress
+                
+                INETOPT = ctypes.windll.iphlpapi
+                SendARP = INETOPT.SendARP
+                SendARP.argtypes = [wintypes.ULONG, wintypes.ULONG, ctypes.c_void_p, ctypes.POINTER(wintypes.ULONG)]
+                SendARP.restype = wintypes.DWORD
+                
+                dstAddr = struct.unpack('<I', socket.inet_aton(request.ip))[0]
+                active_interfaces = []
+                all_interface_results = []
+                lock = threading.Lock()
+                threads = []
+                
+                def send_arp_from_iface(name, localIp, netmask):
+                    try:
+                        srcAddr = struct.unpack('<I', socket.inet_aton(localIp))[0]
+                        macAddr = (ctypes.c_ubyte * 6)()
+                        macAddrLen = wintypes.ULONG(6)
+                        arpResult = SendARP(dstAddr, srcAddr, macAddr, byref(macAddrLen))
+                        
+                        arp_success = (arpResult == 0)
+                        device_mac = None
+                        if arp_success:
+                            device_mac = ':'.join(f'{macAddr[i]:02x}' for i in range(6))
+                        
+                        same_subnet = False
+                        try:
+                            network = ipaddress.ip_network(f"{localIp}/{netmask}", strict=False)
+                            same_subnet = ipaddress.ip_address(request.ip) in network
+                        except:
+                            pass
+                        
+                        iface_result = {
+                            'name': name,
+                            'ip': localIp,
+                            'netmask': netmask,
+                            'same_subnet': same_subnet,
+                            'arp_success': arp_success,
+                            'device_mac': device_mac,
+                        }
+                        
+                        with lock:
+                            all_interface_results.append(iface_result)
+                            if arp_success:
+                                active_interfaces.append(iface_result)
+                    except:
+                        pass
+                
+                for name, addrs in psutil.net_if_addrs().items():
+                    for addr in addrs:
+                        if addr.family == socket.AF_INET and addr.address != '127.0.0.1':
+                            netmask = addr.netmask if addr.netmask else '255.255.255.0'
+                            t = threading.Thread(target=send_arp_from_iface, args=(name, addr.address, netmask))
+                            threads.append(t)
+                            t.start()
+                
+                for t in threads:
+                    t.join(timeout=3)
+                
+                # 2. 从MNDP获取设备所在的网卡
+                mndp_iface = None
+                if hasattr(app.state, 'mndp_core') and app.state.mndp_core:
+                    # 通过IP查找设备的MAC地址
+                    device_mac = None
+                    with devices_lock:
+                        for mac, dev in discovered_devices.items():
+                            if dev.get('IPv4-Address') == request.ip:
+                                device_mac = mac
+                                break
+                    
+                    if device_mac:
+                        mndp_iface = app.state.mndp_core.get_device_interface(device_mac)
+                
+                # 3. IP冲突检测
+                ip_conflict = False
+                if active_interfaces:
+                    detected_macs = [iface['device_mac'] for iface in active_interfaces if iface['device_mac']]
+                    if len(detected_macs) > 1:
+                        unique_macs = set(detected_macs)
+                        if len(unique_macs) > 1:
+                            ip_conflict = True
+                
+                # 4. 构建诊断信息
+                diagnosis_info = {
+                    'active_interfaces': active_interfaces,
+                    'all_interfaces': all_interface_results,
+                    'mndp_interface': mndp_iface,
+                    'ip_conflict': ip_conflict,
+                }
+                
+                # 5. 生成诊断消息
+                diag_messages = []
+                
+                if mndp_iface:
+                    diag_messages.append(f"设备在网卡 {mndp_iface['name']} ({mndp_iface['ip']}) 上被发现")
+                    
+                    # 检查该网卡是否与设备同网段
+                    try:
+                        network = ipaddress.ip_network(f"{mndp_iface['ip']}/255.255.255.0", strict=False)
+                        if ipaddress.ip_address(request.ip) not in network:
+                            diag_messages.append(f"⚠️ 该网卡与设备不在同一网段，建议添加同网段IP")
+                    except:
+                        pass
+                elif active_interfaces:
+                    # ARP能到达但MNDP没发现
+                    iface_names = [iface['name'] for iface in active_interfaces]
+                    diag_messages.append(f"ARP可达网卡: {', '.join(iface_names)}")
+                else:
+                    diag_messages.append("⚠️ 所有网卡都无法通过ARP到达设备")
+                
+                if ip_conflict:
+                    diag_messages.append("⚠️ 检测到IP地址冲突！")
+                
+                if diag_messages:
+                    diagnosis_info['message'] = '\n'.join(diag_messages)
+                    
+            except Exception as e:
+                logger.error(f"登录失败诊断出错: {e}")
+            
+            return {
+                "status": "error", 
+                "message": message, 
+                "ip": request.ip, 
+                "username": request.username,
+                "diagnosis": diagnosis_info
+            }
             
     except Exception as e:
         logger.error(f"连接错误: {request.ip} - {e}")
