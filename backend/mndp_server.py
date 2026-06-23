@@ -214,6 +214,12 @@ class MNDPCore:
         self.is_running = False
         self.sock = None
         self.listener_thread = None
+        # 混合模式：辅助socket用于识别网卡
+        self.aux_sockets = []  # [{'sock': socket, 'name': iface_name, 'ip': iface_ip}, ...]
+        self.aux_listener_threads = []
+        # 记录设备MAC -> 发现网卡信息的映射
+        self.device_interface_map = {}  # {mac: {'name': iface_name, 'ip': iface_ip}}
+        self.device_interface_lock = threading.Lock()
     
     def _create_udp_socket(self):
         try:
@@ -232,6 +238,46 @@ class MNDPCore:
         except Exception as e:
             print(f"创建MNDP套接字失败: {e}")
             return None
+    
+    def _create_aux_sockets(self):
+        """为每块物理网卡创建辅助socket，用于识别设备在哪块网卡上"""
+        interfaces = get_network_interfaces()
+        for iface in interfaces:
+            # 跳过虚拟网卡
+            if iface.get('is_virtual', False):
+                continue
+            if not iface['ips']:
+                continue
+            
+            for ip in iface['ips']:
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                    sock.bind((ip, 5678))
+                    
+                    # 加入组播组（绑定到具体IP需要指定接口）
+                    try:
+                        mreq = struct.pack(
+                            "4s4s",
+                            socket.inet_aton("239.255.255.255"),
+                            socket.inet_aton(ip),
+                        )
+                        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+                    except Exception as e:
+                        print(f"辅助socket {iface['name']} ({ip}) 加入组播失败: {e}")
+                    
+                    sock.settimeout(1)
+                    self.aux_sockets.append({
+                        'sock': sock,
+                        'name': iface['name'],
+                        'ip': ip,
+                    })
+                    print(f"创建辅助socket: {iface['name']} ({ip}:5678)")
+                except Exception as e:
+                    print(f"创建辅助socket失败 {iface['name']} ({ip}): {e}")
+        
+        return len(self.aux_sockets) > 0
     
     def send_discovery_packet(self, interface_name=None):
         discovery_packet = b"\x00\x00\x00\x00\x00\x01\x00\x00"
@@ -351,6 +397,7 @@ class MNDPCore:
             return None
     
     def _listener(self):
+        """主socket监听线程 - 接收所有MNDP包"""
         while self.is_running:
             try:
                 self.sock.settimeout(1)
@@ -373,14 +420,52 @@ class MNDPCore:
                     print(f"监听MNDP数据包出错: {e}")
                     continue
     
+    def _aux_listener(self, aux_info):
+        """辅助socket监听线程 - 识别设备在哪块网卡上"""
+        sock = aux_info['sock']
+        iface_name = aux_info['name']
+        iface_ip = aux_info['ip']
+        
+        while self.is_running:
+            try:
+                sock.settimeout(1)
+                data, addr = sock.recvfrom(8192)
+                device_info = self._parse_mndp_packet(data)
+                
+                if device_info and device_info["MAC-Address"]:
+                    mac = device_info["MAC-Address"]
+                    # 记录设备所在的网卡
+                    with self.device_interface_lock:
+                        self.device_interface_map[mac] = {
+                            'name': iface_name,
+                            'ip': iface_ip,
+                            'last_seen': time.time()
+                        }
+                    print(f"设备 {device_info.get('Identity', 'Unknown')} (MAC: {mac}) 在网卡 {iface_name} ({iface_ip}) 上被发现")
+            except socket.timeout:
+                continue
+            except Exception as e:
+                if self.is_running:
+                    # 忽略辅助socket的错误，继续监听
+                    pass
+    
     def start_listener(self):
         if not self.is_running:
             self.sock = self._create_udp_socket()
             if self.sock:
                 self.is_running = True
+                # 启动主socket监听
                 self.listener_thread = threading.Thread(target=self._listener, daemon=True)
                 self.listener_thread.start()
-                print("MNDP监听已启动（端口5678）")
+                print("MNDP主监听已启动（端口5678）")
+                
+                # 创建并启动辅助socket
+                if self._create_aux_sockets():
+                    for aux_info in self.aux_sockets:
+                        t = threading.Thread(target=self._aux_listener, args=(aux_info,), daemon=True)
+                        t.start()
+                        self.aux_listener_threads.append(t)
+                    print(f"MNDP辅助监听已启动（{len(self.aux_sockets)}个辅助socket）")
                 return True
         return False
     
@@ -388,11 +473,24 @@ class MNDPCore:
         self.is_running = False
         if self.sock:
             self.sock.close()
+        # 关闭辅助socket
+        for aux_info in self.aux_sockets:
+            try:
+                aux_info['sock'].close()
+            except:
+                pass
+        self.aux_sockets.clear()
+        self.aux_listener_threads.clear()
         print("MNDP监听已停止")
     
     def get_devices(self):
         with devices_lock:
             return list(discovered_devices.values())
+    
+    def get_device_interface(self, mac_address):
+        """获取设备所在的网卡信息"""
+        with self.device_interface_lock:
+            return self.device_interface_map.get(mac_address)
 
     def cleanup_expired_devices(self):
         with devices_lock:
@@ -402,11 +500,20 @@ class MNDPCore:
             for k in expired_keys:
                 del discovered_devices[k]
                 self.devices = [d for d in self.devices if d.get('MAC-Address') != k]
+        
+        # 清理过期的网卡映射
+        with self.device_interface_lock:
+            expired_iface_keys = [k for k, v in self.device_interface_map.items()
+                                 if current_time - v.get('last_seen', 0) > DEVICE_EXPIRE_SECONDS]
+            for k in expired_iface_keys:
+                del self.device_interface_map[k]
 
     def clear_devices(self):
         with devices_lock:
             discovered_devices.clear()
             self.devices.clear()
+        with self.device_interface_lock:
+            self.device_interface_map.clear()
 
 class APIHandler(BaseHTTPRequestHandler):
     mndp_core = None
