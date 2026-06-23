@@ -6043,8 +6043,16 @@ async def start_websocket_server(port: int = 32996) -> None:
     
     if tls_config.get('enabled') and tls_config.get('cert_file') and tls_config.get('key_file'):
         from ssl_context import get_server_ssl_context
-        ssl_context = get_server_ssl_context(tls_config['cert_file'], tls_config['key_file'])
-        logger.info(f"WebSocket TLS 已启用 (cert={tls_config['cert_file']})")
+        # 自动确保证书文件存在
+        from generate_cert import ensure_cert_exists
+        ensure_cert_exists(get_base_dir())
+        cert_path = os.path.abspath(os.path.join(get_base_dir(), tls_config['cert_file']))
+        key_path = os.path.abspath(os.path.join(get_base_dir(), tls_config['key_file']))
+        if os.path.exists(cert_path) and os.path.exists(key_path):
+            ssl_context = get_server_ssl_context(cert_path, key_path)
+            logger.info(f"WebSocket TLS 已启用 (cert={cert_path})")
+        else:
+            logger.error(f"WebSocket TLS 证书文件不存在: cert={cert_path}, key={key_path}，回退到 WS")
     
     protocol = 'wss' if ssl_context else 'ws'
     logger.info(f"WebSocket 服务器启动在 {protocol}://0.0.0.0:{port}")

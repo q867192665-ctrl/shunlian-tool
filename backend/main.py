@@ -112,15 +112,26 @@ def main():
     logger.info(f"WebSocket 端口: {ws_port}")
     logger.info(f"TLS 启用: {tls_config.get('enabled', False)}")
     
+    # 如果 TLS 已启用，自动确保证书文件存在
+    if tls_config.get('enabled'):
+        from generate_cert import ensure_cert_exists
+        if not ensure_cert_exists(get_base_dir()):
+            logger.warning("TLS 证书自动生成失败，将回退到 HTTP 模式")
+    
     # 启动 API 服务器（通过 uvicorn）
     import uvicorn
     from api_server import app
     
     ssl_kwargs = {}
     if tls_config.get('enabled') and tls_config.get('cert_file') and tls_config.get('key_file'):
-        from ssl_context import get_server_ssl_context
-        ssl_kwargs['ssl'] = get_server_ssl_context(tls_config['cert_file'], tls_config['key_file'])
-        logger.info(f"TLS 证书: {tls_config['cert_file']}")
+        cert_path = os.path.abspath(os.path.join(get_base_dir(), tls_config['cert_file']))
+        key_path = os.path.abspath(os.path.join(get_base_dir(), tls_config['key_file']))
+        if os.path.exists(cert_path) and os.path.exists(key_path):
+            ssl_kwargs['ssl_certfile'] = cert_path
+            ssl_kwargs['ssl_keyfile'] = key_path
+            logger.info(f"TLS 证书: {cert_path}")
+        else:
+            logger.error(f"TLS 证书文件不存在: cert={cert_path}, key={key_path}，回退到 HTTP")
     
     protocol = 'https' if ssl_kwargs else 'http'
     ws_protocol = 'wss' if ssl_kwargs else 'ws'

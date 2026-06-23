@@ -8,16 +8,19 @@ export default defineConfig(({ command }) => ({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:32995',
+        target: 'https://localhost:32995',
         changeOrigin: true,
+        secure: false,
       },
       '/static': {
-        target: 'http://localhost:32995',
+        target: 'https://localhost:32995',
         changeOrigin: true,
+        secure: false,
       },
       '/ws': {
-        target: 'ws://localhost:32996',
+        target: 'wss://localhost:32996',
         ws: true,
+        secure: false,
       },
     },
   },

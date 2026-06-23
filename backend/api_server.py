@@ -30,7 +30,6 @@ from pydantic import BaseModel
 
 from mikrotik_api import MikroTikAPI, set_device_platform, get_api_port, get_telnet_port, is_slsc_device
 from api_connection import api_connection, execute_with_api
-from ssl_context import get_ssl_context
 from iperf3_handler import iperf3_handler, is_iperf3_available
 
 logger = logging.getLogger(__name__)
@@ -2408,50 +2407,111 @@ async def update_wireless_interface(request: WirelessInterfaceUpdateRequest):
 
 @app.post("/api/check-arp")
 async def check_arp(request: CheckArpRequest):
-    """检查设备是否可达（通过ARP广播）"""
+    """检查设备是否可达（通过ARP广播），并返回活跃网卡、同网段判断、IP冲突检测"""
     ip = request.ip
     if not ip:
         return {"reachable": False}
-    
+
     try:
         import ctypes
         from ctypes import wintypes, POINTER, byref
-        
+        import ipaddress
+
         INETOPT = ctypes.windll.iphlpapi
         SendARP = INETOPT.SendARP
-        SendARP.argtypes = [wintypes.ULONG, wintypes.ULONG, POINTER(wintypes.ULONG), POINTER(wintypes.ULONG)]
+        SendARP.argtypes = [wintypes.ULONG, wintypes.ULONG, ctypes.c_void_p, POINTER(wintypes.ULONG)]
         SendARP.restype = wintypes.DWORD
-        
+
         dstAddr = struct.unpack('<I', socket.inet_aton(ip))[0]
-        
+
         reachable = False
+        active_interfaces = []       # ARP成功的网卡
+        all_interface_results = []  # 所有网卡检测结果
         lock = threading.Lock()
         threads = []
-        
-        def send_arp_from_interface(name, localIp):
+
+        def send_arp_from_interface(name, localIp, netmask):
             nonlocal reachable
             try:
                 srcAddr = struct.unpack('<I', socket.inet_aton(localIp))[0]
-                macAddr = wintypes.ULONG()
+                # MAC地址是6字节，使用6字节的数组
+                macAddr = (ctypes.c_ubyte * 6)()
                 macAddrLen = wintypes.ULONG(6)
-                arpResult = SendARP(dstAddr, srcAddr, byref(macAddr), byref(macAddrLen))
-                if arpResult == 0:
-                    with lock:
+                arpResult = SendARP(dstAddr, srcAddr, macAddr, byref(macAddrLen))
+
+                arp_success = (arpResult == 0)
+                device_mac = None
+                if arp_success:
+                    device_mac = ':'.join(f'{macAddr[i]:02x}' for i in range(6))
+
+                # 判断是否同网段
+                same_subnet = False
+                try:
+                    network = ipaddress.ip_network(f"{localIp}/{netmask}", strict=False)
+                    same_subnet = ipaddress.ip_address(ip) in network
+                except Exception:
+                    pass
+
+                iface_result = {
+                    'name': name,
+                    'ip': localIp,
+                    'netmask': netmask,
+                    'same_subnet': same_subnet,
+                    'arp_success': arp_success,
+                    'device_mac': device_mac,
+                }
+
+                with lock:
+                    all_interface_results.append(iface_result)
+                    if arp_success:
                         reachable = True
+                        active_interfaces.append(iface_result)
             except Exception:
                 pass
-        
+
         for name, addrs in psutil.net_if_addrs().items():
             for addr in addrs:
                 if addr.family == socket.AF_INET and addr.address != '127.0.0.1':
-                    t = threading.Thread(target=send_arp_from_interface, args=(name, addr.address))
+                    netmask = addr.netmask if addr.netmask else '255.255.255.0'
+                    t = threading.Thread(target=send_arp_from_interface, args=(name, addr.address, netmask))
                     threads.append(t)
                     t.start()
-        
+
         for t in threads:
             t.join(timeout=3)
-        
-        return {"reachable": reachable}
+
+        # IP冲突检测：ARP返回的MAC与MNDP发现的MAC不一致
+        ip_conflict = False
+        ip_conflict_info = None
+        if active_interfaces:
+            detected_macs = [iface['device_mac'] for iface in active_interfaces if iface['device_mac']]
+            if len(detected_macs) > 1:
+                unique_macs = set(detected_macs)
+                if len(unique_macs) > 1:
+                    ip_conflict = True
+                    ip_conflict_info = f"同一IP返回了多个不同MAC: {list(unique_macs)}"
+
+        # 诊断建议
+        diagnosis = None
+        if not reachable:
+            same_subnet_ifaces = [r for r in all_interface_results if r['same_subnet']]
+            if same_subnet_ifaces:
+                diagnosis = "本机有同网段IP但ARP无响应，可能是设备离线或防火墙阻止"
+            else:
+                diagnosis = "本机没有与设备同网段的IP，请配置网卡到设备所在网段"
+        elif ip_conflict:
+            diagnosis = f"检测到IP地址冲突！{ip_conflict_info}"
+        else:
+            diagnosis = "网络连通正常"
+
+        return {
+            "reachable": reachable,
+            "active_interfaces": active_interfaces,
+            "all_interfaces": all_interface_results,
+            "ip_conflict": ip_conflict,
+            "ip_conflict_info": ip_conflict_info,
+            "diagnosis": diagnosis,
+        }
     except Exception as e:
         logger.error(f"ARP检查失败: {e}")
         return {"reachable": False, "error": str(e)}
@@ -3710,9 +3770,15 @@ if __name__ == '__main__':
     
     ssl_kwargs = {}
     if tls_config.get('enabled') and tls_config.get('cert_file') and tls_config.get('key_file'):
-        from ssl_context import get_server_ssl_context
-        ssl_kwargs['ssl'] = get_server_ssl_context(tls_config['cert_file'], tls_config['key_file'])
-        logger.info(f"TLS 已启用 (cert={tls_config['cert_file']})")
+        # 解析证书路径（相对于程序根目录）
+        cert_path = os.path.abspath(os.path.join(get_base_dir(), tls_config['cert_file']))
+        key_path = os.path.abspath(os.path.join(get_base_dir(), tls_config['key_file']))
+        if os.path.exists(cert_path) and os.path.exists(key_path):
+            ssl_kwargs['ssl_certfile'] = cert_path
+            ssl_kwargs['ssl_keyfile'] = key_path
+            logger.info(f"TLS 已启用 (cert={cert_path})")
+        else:
+            logger.error(f"TLS 证书文件不存在: cert={cert_path}, key={key_path}，回退到 HTTP")
     
     logger.info(f"API Server 启动在 {'https' if ssl_kwargs else 'http'}://{host}:{port}")
     logger.info(f"前端网页地址: {'https' if ssl_kwargs else 'http'}://localhost:{port}")

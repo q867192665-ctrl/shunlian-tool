@@ -110,6 +110,20 @@ def check_health_api():
     if not HAS_URLLIB:
         return is_port_open(HTTP_PORT)
     try:
+        # 优先尝试 HTTPS（TLS 已启用时）
+        import ssl
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        url = f'https://127.0.0.1:{HTTP_PORT}/api/health'
+        req = urllib.request.Request(url, method='GET')
+        with urllib.request.urlopen(req, timeout=HEALTH_CHECK_TIMEOUT, context=ssl_context) as resp:
+            if resp.status == 200:
+                return True
+    except Exception:
+        pass
+    # 回退到 HTTP
+    try:
         url = f'http://127.0.0.1:{HTTP_PORT}/api/health'
         req = urllib.request.Request(url, method='GET')
         with urllib.request.urlopen(req, timeout=HEALTH_CHECK_TIMEOUT) as resp:
@@ -220,7 +234,25 @@ def wait_for_backend():
 
 
 def open_browser():
-    url = f'http://localhost:{HTTP_PORT}'
+    # 优先使用 HTTPS（TLS 已启用时），回退到 HTTP
+    url_https = f'https://localhost:{HTTP_PORT}'
+    url_http = f'http://localhost:{HTTP_PORT}'
+    
+    # 检测 TLS 是否启用：尝试 HTTPS 连接
+    use_https = False
+    try:
+        import ssl
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        with socket.create_connection(('127.0.0.1', HTTP_PORT), timeout=3) as sock:
+            ssock = ssl_context.wrap_socket(sock, server_hostname='localhost')
+            ssock.close()
+            use_https = True
+    except Exception:
+        pass
+    
+    url = url_https if use_https else url_http
     logger.info(f"打开浏览器: {url}")
     webbrowser.open(url)
 

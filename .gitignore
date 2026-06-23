@@ -46,3 +46,10 @@ installer_output/
 
 # Temporary test scripts
 backend/test_*.py
+
+# SSL Certificates
+backend/certs/
+*.pem
+*.cer
+*.crt
+*.key

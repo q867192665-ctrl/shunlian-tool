@@ -8,6 +8,24 @@ import styles from './LoginPage.module.css';
 
 export const LoginPage: React.FC = () => {
   const { setRouter, setLoggedIn, theme, setTheme } = useAppState();
+
+  // 简单加密/解密：使用固定密钥进行Base64+XOR混淆，防止明文暴露
+  const _ENC_KEY = 'SLSC2025';
+  const _encrypt = (text: string): string => {
+    try {
+      const encoded = encodeURIComponent(text);
+      const xored = encoded.split('').map((c, i) => String.fromCharCode(c.charCodeAt(0) ^ _ENC_KEY.charCodeAt(i % _ENC_KEY.length))).join('');
+      return btoa(xored);
+    } catch { return ''; }
+  };
+  const _decrypt = (cipher: string): string => {
+    try {
+      const xored = atob(cipher);
+      const decoded = xored.split('').map((c, i) => String.fromCharCode(c.charCodeAt(0) ^ _ENC_KEY.charCodeAt(i % _ENC_KEY.length))).join('');
+      return decodeURIComponent(decoded);
+    } catch { return ''; }
+  };
+
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [search, setSearch] = useState('');
   const [ip, setIp] = useState(() => localStorage.getItem('savedIp') || '');
@@ -37,7 +55,7 @@ export const LoginPage: React.FC = () => {
   useEffect(() => {
     if (rememberPassword) {
       const savedPwd = localStorage.getItem('savedPassword');
-      if (savedPwd) setPassword(savedPwd);
+      if (savedPwd) setPassword(_decrypt(savedPwd));
     }
   }, [rememberPassword]);
 
@@ -140,7 +158,7 @@ export const LoginPage: React.FC = () => {
       localStorage.setItem('rememberPwd', 'true');
       localStorage.setItem('savedIp', ip);
       localStorage.setItem('savedUsername', username);
-      localStorage.setItem('savedPassword', password);
+      localStorage.setItem('savedPassword', _encrypt(password));
     } else {
       localStorage.removeItem('rememberPwd');
       localStorage.removeItem('savedIp');
