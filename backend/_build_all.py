@@ -99,6 +99,16 @@ if os.path.exists(static_dst):
 shutil.copytree('static', static_dst)
 print('  复制: static/')
 
+# 复制 TLS 证书目录（Inno Setup 安装包需要）
+certs_dst = os.path.join(setup_dir, 'certs')
+if os.path.exists('certs'):
+    if os.path.exists(certs_dst):
+        shutil.rmtree(certs_dst)
+    shutil.copytree('certs', certs_dst)
+    print('  复制: certs/')
+else:
+    print('  警告：certs 目录不存在，首次启动时将自动生成证书')
+
 # 复制 iperf3 带宽测速工具
 iperf3_dst = os.path.join(setup_dir, 'iperf3')
 if os.path.exists('iperf3'):

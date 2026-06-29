@@ -7,6 +7,7 @@ import {
   ClearOutlined,
 } from '@ant-design/icons';
 import { useAppState } from '../../contexts/AppContext';
+import SpeedTestChart from './SpeedTestChart';
 import styles from './SpeedTestPage.module.css';
 
 type Mode = 'server' | 'client';
@@ -44,9 +45,11 @@ export const SpeedTestPage: React.FC = () => {
   const [bandwidth, setBandwidth] = useState('10M');
   const [customBandwidth, setCustomBandwidth] = useState('');
   const [reverse, setReverse] = useState(false);
+  const [bidir, setBidir] = useState(false);
 
   // 运行状态
   const [available, setAvailable] = useState<boolean | null>(null);
+  const [serverIp, setServerIp] = useState('');
   const [running, setRunning] = useState(false);
   const [outputLines, setOutputLines] = useState<string[]>([]);
   const [result, setResult] = useState<SpeedTestResult | null>(null);
@@ -63,6 +66,16 @@ export const SpeedTestPage: React.FC = () => {
       .then(data => setAvailable(data.available))
       .catch(() => setAvailable(false));
   }, []);
+
+  // 切换到服务端模式时获取与设备通信的本机 IP 地址
+  useEffect(() => {
+    if (mode === 'server' && router.ipAddress) {
+      fetch(`/api/speedtest/server-ip?device_ip=${encodeURIComponent(router.ipAddress)}`)
+        .then(res => res.json())
+        .then(data => setServerIp(data.ip || ''))
+        .catch(() => setServerIp(''));
+    }
+  }, [mode, router.ipAddress]);
 
   // 自动滚动输出区
   useEffect(() => {
@@ -176,6 +189,7 @@ export const SpeedTestPage: React.FC = () => {
             threads,
             bandwidth: protocol === 'UDP' ? actualBandwidth : '',
             reverse,
+            bidir,
           }),
         });
       }
@@ -216,6 +230,10 @@ export const SpeedTestPage: React.FC = () => {
   };
 
   const isClient = mode === 'client';
+  // 反向测速仅对客户端生效（状态文字/标签用）
+  const effectiveReverse = isClient && reverse;
+  // 图表数据方向：服务端模式恒为接收，客户端模式跟随 reverse
+  const chartReverse = !isClient || reverse;
 
   // 按钮选项组件
   const BtnOption = ({
@@ -271,6 +289,16 @@ export const SpeedTestPage: React.FC = () => {
               </BtnOption>
             </div>
           </div>
+
+          {/* 服务器IP地址 - 仅服务端模式 */}
+          {!isClient && serverIp && (
+            <div className={styles.configItem}>
+              <span className={styles.configLabel}>服务器IP地址</span>
+              <div className={styles.serverIpList}>
+                <span className={styles.serverIpTag}>{serverIp}</span>
+              </div>
+            </div>
+          )}
 
           {/* 协议 - 仅客户端 */}
           <div className={styles.configItem}>
@@ -375,8 +403,29 @@ export const SpeedTestPage: React.FC = () => {
             <div className={styles.configItem}>
               <span className={styles.configLabel}>反向测速（服务端发送）</span>
               <div className={styles.switchRow}>
-                <Switch checked={reverse} onChange={setReverse} disabled={running} size="small" />
+                <Switch
+                  checked={reverse}
+                  onChange={(v) => { setReverse(v); if (v) setBidir(false); }}
+                  disabled={running || bidir}
+                  size="small"
+                />
                 <span className={styles.switchLabel}>{reverse ? '开启' : '关闭'}</span>
+              </div>
+            </div>
+          )}
+
+          {/* 双向测速 - 仅客户端 */}
+          {isClient && (
+            <div className={styles.configItem}>
+              <span className={styles.configLabel}>双向测速（同时发送+接收）</span>
+              <div className={styles.switchRow}>
+                <Switch
+                  checked={bidir}
+                  onChange={(v) => { setBidir(v); if (v) setReverse(false); }}
+                  disabled={running || reverse}
+                  size="small"
+                />
+                <span className={styles.switchLabel}>{bidir ? '开启' : '关闭'}</span>
               </div>
             </div>
           )}
@@ -419,29 +468,41 @@ export const SpeedTestPage: React.FC = () => {
           />
           <span>
             {testStatus === 'idle' && '空闲'}
-            {testStatus === 'running' && `测速中 (${mode === 'server' ? '服务端' : '客户端'}模式)`}
-            {testStatus === 'completed' && '测速完成'}
+            {mode === 'server' && testStatus !== 'idle' && '测速中 (服务端模式)'}
+            {mode === 'client' && testStatus === 'running' && `测速中 (客户端${effectiveReverse ? ' 反向' : bidir ? ' 双向' : ''}模式)`}
+            {mode === 'client' && testStatus === 'completed' && '测速完成'}
           </span>
         </div>
       </div>
 
-      {/* 实时输出区 */}
+      {/* 实时图表区 */}
       <div className={styles.outputSection}>
         <div className={styles.outputHeader}>
-          <span className={styles.outputTitle}>实时输出</span>
+          <span className={styles.outputTitle}>实时带宽图表</span>
+          {effectiveReverse && <span className={styles.outputBadge}>反向模式</span>}
+          {bidir && <span className={styles.outputBadge}>双向模式</span>}
         </div>
-        <div className={styles.outputBody} ref={outputRef}>
-          {outputLines.length === 0 ? (
-            <div className={styles.outputEmpty}>
-              {running ? '等待 iperf3 输出...' : '点击"开始测速"运行 iperf3'}
-            </div>
-          ) : (
-            outputLines.map((line, i) => (
-              <div key={i} className={styles.outputLine}>{line}</div>
-            ))
-          )}
+        <div className={styles.chartBody}>
+          <SpeedTestChart
+            lines={outputLines}
+            reverse={chartReverse}
+            running={running}
+            isServer={!isClient}
+          />
         </div>
       </div>
+
+      {/* 原始输出区（可折叠） */}
+      {outputLines.length > 0 && (
+        <details className={styles.rawOutputSection}>
+          <summary className={styles.rawOutputSummary}>查看原始输出（{outputLines.length} 行）</summary>
+          <div className={styles.outputBody} ref={outputRef}>
+            {outputLines.map((line, i) => (
+              <div key={i} className={styles.outputLine}>{line}</div>
+            ))}
+          </div>
+        </details>
+      )}
 
       {/* 汇总区 */}
       {result && (result.sent_bps > 0 || result.received_bps > 0 || result.error) && (

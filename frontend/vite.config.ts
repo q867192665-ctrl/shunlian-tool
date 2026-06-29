@@ -26,7 +26,9 @@ export default defineConfig(({ command }) => ({
   },
   build: {
     outDir: '../backend/static',
-    emptyOutDir: true,
+    // 不清空整个 static 目录，避免删除旧版本静态资源导致刷新中的用户 404
+    // 旧 hash 资源会保留在 assets/ 中，直到下次手动清理
+    emptyOutDir: false,
     rollupOptions: {
       output: {
         assetFileNames: 'assets/[name]-[hash][extname]',

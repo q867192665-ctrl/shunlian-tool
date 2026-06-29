@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 
-from mikrotik_api import MikroTikAPI, set_device_platform, get_api_port, get_telnet_port, is_slsc_device
+from mikrotik_api import MikroTikAPI, set_device_platform, get_api_port, get_telnet_port, is_slsc_device, is_platform_known, SLSC_API_PORT, DEFAULT_API_PORT
 from api_connection import api_connection, execute_with_api
 from iperf3_handler import iperf3_handler, is_iperf3_available
 
@@ -135,6 +135,7 @@ class ConnectRequest(BaseModel):
     username: str
     password: str = ""
     platform: str = ""  # 设备平台信息（用于 SLSC 端口判断）
+    compat_mode: bool = False  # 是否启用兼容模式（仅当次会话有效，用于登录非 SLSC 平台设备）
 
 class CheckArpRequest(BaseModel):
     """ARP 检查请求"""
@@ -658,8 +659,20 @@ app.add_middleware(
 # 静态文件
 static_dir = CONFIG.get('static', {}).get('directory', 'static')
 static_path = os.path.join(get_base_dir(), static_dir)
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """禁用缓存的静态文件服务 - 避免前端更新后用户看到旧版本"""
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+
 if os.path.exists(static_path):
-    app.mount("/static", StaticFiles(directory=static_path, html=True), name="static")
+    app.mount("/static", NoCacheStaticFiles(directory=static_path, html=True), name="static")
 
 
 # ==================== API 路由 ====================
@@ -891,10 +904,31 @@ async def connect_device(request: ConnectRequest):
         # 记录设备平台信息
         if request.platform:
             set_device_platform(request.ip, request.platform)
-        
-        logger.info(f"尝试登录设备: {request.ip} (用户: {request.username})")
-        
-        mt_api = MikroTikAPI(request.ip, request.username, request.password)
+
+        # 判断设备平台状态：已知 SLSC / 已知非 SLSC / 未识别（跨网段 / 未被 MNDP 发现）
+        is_slsc = is_slsc_device(request.ip)
+        platform_known = is_platform_known(request.ip)
+        is_known_non_slsc = platform_known and not is_slsc
+
+        # 未启用"兼容模式"时，已知非 SLSC 平台设备不允许登录
+        if is_known_non_slsc and not request.compat_mode:
+            logger.warning(f"拒绝登录非 SLSC 平台设备: {request.ip}（未启用兼容模式）")
+            raise HTTPException(status_code=403, detail="无法解析设备")
+
+        # 确定 API 端口
+        # - 已知 SLSC: 2468（SLSC 平台只使用 2468，不兼容 8728）
+        # - 已知非 SLSC: 8728（仅在启用"兼容模式"时才会走到这里）
+        # - 未识别平台（跨网段 / 未被 MNDP 发现）: 2468（默认按 SLSC 流程登录）
+        if is_slsc:
+            api_port = SLSC_API_PORT
+        elif is_known_non_slsc:
+            api_port = DEFAULT_API_PORT
+        else:
+            api_port = SLSC_API_PORT
+
+        logger.info(f"尝试登录设备: {request.ip} (用户: {request.username}, 端口: {api_port})")
+
+        mt_api = MikroTikAPI(request.ip, request.username, request.password, port=api_port)
         success, message = mt_api.login()
         
         if success:
@@ -934,131 +968,214 @@ async def connect_device(request: ConnectRequest):
             if mt_api:
                 mt_api.close()
             logger.warning(f"登录失败: {request.ip} - {message}")
+
+            # 未识别平台（跨网段 / 未被 MNDP 发现）且登录失败表现为端口错误（连接被拒绝/超时/不可达等）时，
+            # 说明目标设备的 API 端口不是默认的 2468，提示"无法解析设备"
+            if not platform_known:
+                msg_lower = message.lower()
+                is_port_error = any(kw in msg_lower for kw in [
+                    'refused', 'timeout', 'timed out', 'unreachable',
+                    'no route', 'reset', 'closed', '拒绝', '超时', '不可达', '无法连接'
+                ])
+                if is_port_error:
+                    logger.warning(f"未识别平台设备登录失败（端口错误）: {request.ip} - {message}")
+                    raise HTTPException(status_code=502, detail="无法解析设备")
+
+            # 判断是否为网络相关错误（非密码/认证错误）
+            msg_lower = message.lower()
+            is_network_error = not any(kw in msg_lower for kw in [
+                'password', 'auth', 'credential', '用户名', '密码', '拒绝', 'refused',
+                'invalid', 'wrong', 'incorrect', 'login', 'fail to login', '登录失败'
+            ])
             
-            # 登录失败时进行网络诊断
+            # 仅网络相关错误才进行网络诊断
             diagnosis_info = None
-            try:
-                # 1. 通过ARP检查网卡连通性
-                import ctypes
-                from ctypes import wintypes, byref
-                import ipaddress
-                
-                INETOPT = ctypes.windll.iphlpapi
-                SendARP = INETOPT.SendARP
-                SendARP.argtypes = [wintypes.ULONG, wintypes.ULONG, ctypes.c_void_p, ctypes.POINTER(wintypes.ULONG)]
-                SendARP.restype = wintypes.DWORD
-                
-                dstAddr = struct.unpack('<I', socket.inet_aton(request.ip))[0]
-                active_interfaces = []
-                all_interface_results = []
-                lock = threading.Lock()
-                threads = []
-                
-                def send_arp_from_iface(name, localIp, netmask):
-                    try:
-                        srcAddr = struct.unpack('<I', socket.inet_aton(localIp))[0]
-                        macAddr = (ctypes.c_ubyte * 6)()
-                        macAddrLen = wintypes.ULONG(6)
-                        arpResult = SendARP(dstAddr, srcAddr, macAddr, byref(macAddrLen))
-                        
-                        arp_success = (arpResult == 0)
-                        device_mac = None
-                        if arp_success:
-                            device_mac = ':'.join(f'{macAddr[i]:02x}' for i in range(6))
-                        
-                        same_subnet = False
+            if is_network_error:
+                try:
+                    # 1. 通过ARP检查网卡连通性
+                    import ctypes
+                    from ctypes import wintypes, byref
+                    import ipaddress
+                    
+                    INETOPT = ctypes.windll.iphlpapi
+                    SendARP = INETOPT.SendARP
+                    SendARP.argtypes = [wintypes.ULONG, wintypes.ULONG, ctypes.c_void_p, ctypes.POINTER(wintypes.ULONG)]
+                    SendARP.restype = wintypes.DWORD
+                    
+                    dstAddr = struct.unpack('<I', socket.inet_aton(request.ip))[0]
+                    active_interfaces = []
+                    all_interface_results = []
+                    lock = threading.Lock()
+                    threads = []
+                    
+                    def send_arp_from_iface(name, localIp, netmask):
                         try:
-                            network = ipaddress.ip_network(f"{localIp}/{netmask}", strict=False)
-                            same_subnet = ipaddress.ip_address(request.ip) in network
+                            srcAddr = struct.unpack('<I', socket.inet_aton(localIp))[0]
+                            macAddr = (ctypes.c_ubyte * 6)()
+                            macAddrLen = wintypes.ULONG(6)
+                            arpResult = SendARP(dstAddr, srcAddr, macAddr, byref(macAddrLen))
+                            
+                            arp_success = (arpResult == 0)
+                            device_mac = None
+                            if arp_success:
+                                device_mac = ':'.join(f'{macAddr[i]:02x}' for i in range(6))
+                            
+                            same_subnet = False
+                            try:
+                                network = ipaddress.ip_network(f"{localIp}/{netmask}", strict=False)
+                                same_subnet = ipaddress.ip_address(request.ip) in network
+                            except:
+                                pass
+                            
+                            iface_result = {
+                                'name': name,
+                                'ip': localIp,
+                                'netmask': netmask,
+                                'same_subnet': same_subnet,
+                                'arp_success': arp_success,
+                                'device_mac': device_mac,
+                            }
+                            
+                            with lock:
+                                all_interface_results.append(iface_result)
+                                if arp_success:
+                                    active_interfaces.append(iface_result)
                         except:
                             pass
-                        
-                        iface_result = {
-                            'name': name,
-                            'ip': localIp,
-                            'netmask': netmask,
-                            'same_subnet': same_subnet,
-                            'arp_success': arp_success,
-                            'device_mac': device_mac,
-                        }
-                        
-                        with lock:
-                            all_interface_results.append(iface_result)
-                            if arp_success:
-                                active_interfaces.append(iface_result)
-                    except:
-                        pass
-                
-                for name, addrs in psutil.net_if_addrs().items():
-                    for addr in addrs:
-                        if addr.family == socket.AF_INET and addr.address != '127.0.0.1':
-                            netmask = addr.netmask if addr.netmask else '255.255.255.0'
-                            t = threading.Thread(target=send_arp_from_iface, args=(name, addr.address, netmask))
-                            threads.append(t)
-                            t.start()
-                
-                for t in threads:
-                    t.join(timeout=3)
-                
-                # 2. 从MNDP获取设备所在的网卡
-                mndp_iface = None
-                if hasattr(app.state, 'mndp_core') and app.state.mndp_core:
-                    # 通过IP查找设备的MAC地址
+                    
+                    for name, addrs in psutil.net_if_addrs().items():
+                        for addr in addrs:
+                            if addr.family == socket.AF_INET and addr.address != '127.0.0.1':
+                                netmask = addr.netmask if addr.netmask else '255.255.255.0'
+                                t = threading.Thread(target=send_arp_from_iface, args=(name, addr.address, netmask))
+                                threads.append(t)
+                                t.start()
+                    
+                    for t in threads:
+                        t.join(timeout=3)
+                    
+                    # 2. 从MNDP获取设备所在的网卡
+                    mndp_iface = None
                     device_mac = None
-                    with devices_lock:
-                        for mac, dev in discovered_devices.items():
-                            if dev.get('IPv4-Address') == request.ip:
-                                device_mac = mac
-                                break
+                    if hasattr(app.state, 'mndp_core') and app.state.mndp_core:
+                        # 通过IP查找设备的MAC地址
+                        with devices_lock:
+                            for mac, dev in discovered_devices.items():
+                                # 检查IPv4-Address是否存在且匹配
+                                if dev.get('IPv4-Address') and dev.get('IPv4-Address') == request.ip:
+                                    device_mac = mac
+                                    break
+                        
+                        if device_mac:
+                            mndp_iface = app.state.mndp_core.get_device_interface(device_mac)
                     
-                    if device_mac:
-                        mndp_iface = app.state.mndp_core.get_device_interface(device_mac)
-                
-                # 3. IP冲突检测
-                ip_conflict = False
-                if active_interfaces:
-                    detected_macs = [iface['device_mac'] for iface in active_interfaces if iface['device_mac']]
-                    if len(detected_macs) > 1:
-                        unique_macs = set(detected_macs)
-                        if len(unique_macs) > 1:
-                            ip_conflict = True
-                
-                # 4. 构建诊断信息
-                diagnosis_info = {
-                    'active_interfaces': active_interfaces,
-                    'all_interfaces': all_interface_results,
-                    'mndp_interface': mndp_iface,
-                    'ip_conflict': ip_conflict,
-                }
-                
-                # 5. 生成诊断消息
-                diag_messages = []
-                
-                if mndp_iface:
-                    diag_messages.append(f"设备在网卡 {mndp_iface['name']} ({mndp_iface['ip']}) 上被发现")
+                    # 3. IP冲突检测 - MNDP+ARP多次采样方案
+                    ip_conflict = False
+                    conflict_details = []
                     
-                    # 检查该网卡是否与设备同网段
-                    try:
-                        network = ipaddress.ip_network(f"{mndp_iface['ip']}/255.255.255.0", strict=False)
-                        if ipaddress.ip_address(request.ip) not in network:
-                            diag_messages.append(f"⚠️ 该网卡与设备不在同一网段，建议添加同网段IP")
-                    except:
-                        pass
-                elif active_interfaces:
-                    # ARP能到达但MNDP没发现
-                    iface_names = [iface['name'] for iface in active_interfaces]
-                    diag_messages.append(f"ARP可达网卡: {', '.join(iface_names)}")
-                else:
-                    diag_messages.append("⚠️ 所有网卡都无法通过ARP到达设备")
-                
-                if ip_conflict:
-                    diag_messages.append("⚠️ 检测到IP地址冲突！")
-                
-                if diag_messages:
-                    diagnosis_info['message'] = '\n'.join(diag_messages)
+                    if device_mac and mndp_iface:
+                        # 在MNDP发现的网卡上发送3次ARP请求
+                        try:
+                            import ctypes
+                            from ctypes import wintypes, byref
+                            
+                            INETOPT = ctypes.windll.iphlpapi
+                            SendARP = INETOPT.SendARP
+                            SendARP.argtypes = [wintypes.ULONG, wintypes.ULONG, ctypes.c_void_p, ctypes.POINTER(wintypes.ULONG)]
+                            SendARP.restype = wintypes.DWORD
+                            
+                            dstAddr = struct.unpack('<I', socket.inet_aton(request.ip))[0]
+                            srcAddr = struct.unpack('<I', socket.inet_aton(mndp_iface['ip']))[0]
+                            
+                            arp_macs = []
+                            for i in range(3):
+                                try:
+                                    macAddr = (ctypes.c_ubyte * 6)()
+                                    macAddrLen = wintypes.ULONG(6)
+                                    arpResult = SendARP(dstAddr, srcAddr, macAddr, byref(macAddrLen))
+                                    
+                                    if arpResult == 0:
+                                        mac_str = ':'.join(f'{macAddr[j]:02x}' for j in range(6))
+                                        arp_macs.append(mac_str)
+                                    
+                                    if i < 2:
+                                        time.sleep(0.5)
+                                except:
+                                    pass
+                            
+                            if arp_macs:
+                                unique_macs = set(arp_macs)
+                                
+                                # 判断1：多次ARP返回不同MAC → 冲突
+                                if len(unique_macs) > 1:
+                                    ip_conflict = True
+                                    conflict_details = list(unique_macs)
+                                # 判断2：ARP MAC与MNDP MAC对比
+                                elif arp_macs[0].lower() != device_mac.lower():
+                                    # 可疑但不一定是冲突
+                                    logger.warning(f"ARP MAC({arp_macs[0]})与MNDP MAC({device_mac})不一致")
+                        except Exception as e:
+                            logger.error(f"IP冲突检测失败: {e}")
                     
-            except Exception as e:
-                logger.error(f"登录失败诊断出错: {e}")
+                    # 4. 构建诊断信息
+                    diagnosis_info = {
+                        'active_interfaces': active_interfaces,
+                        'all_interfaces': all_interface_results,
+                        'mndp_interface': mndp_iface,
+                        'ip_conflict': ip_conflict,
+                        'conflict_details': conflict_details,
+                    }
+                    
+                    # 5. 生成诊断消息
+                    diag_messages = []
+                    
+                    if mndp_iface:
+                        # MNDP发现了设备在哪块网卡上
+                        diag_messages.append(f"设备发现网卡：{mndp_iface['name']}（{mndp_iface['ip']}）")
+                        
+                        # 检查该网卡是否与设备同网段
+                        try:
+                            network = ipaddress.ip_network(f"{mndp_iface['ip']}/255.255.255.0", strict=False)
+                            if ipaddress.ip_address(request.ip) not in network:
+                                diag_messages.append(f"该网卡与设备不在同一网段，无法登录")
+                                diag_messages.append(f"请为 {mndp_iface['name']} 网卡添加同网段IP（{request.ip.split('.')[0]}.{request.ip.split('.')[1]}.{request.ip.split('.')[2]}.x/24）")
+                        except:
+                            pass
+                    elif active_interfaces:
+                        # ARP能到达，但要检查是否同网段
+                        same_subnet_ifaces = [iface for iface in active_interfaces if iface['same_subnet']]
+                        diff_subnet_ifaces = [iface for iface in active_interfaces if not iface['same_subnet']]
+                        
+                        if same_subnet_ifaces:
+                            iface_names = [iface['name'] for iface in same_subnet_ifaces]
+                            diag_messages.append(f"以下网卡与设备同网段：{', '.join(iface_names)}")
+                            diag_messages.append("网络连通正常，请检查用户名密码或设备服务状态")
+                        
+                        if diff_subnet_ifaces:
+                            iface_names = [iface['name'] for iface in diff_subnet_ifaces]
+                            diag_messages.append(f"以下网卡可检测到设备但IP不同网段：{', '.join(iface_names)}")
+                            diag_messages.append(f"请修改网卡IP为与设备同网段（{request.ip.split('.')[0]}.{request.ip.split('.')[1]}.{request.ip.split('.')[2]}.x/24）")
+                        
+                        if not same_subnet_ifaces and not diff_subnet_ifaces:
+                            iface_names = [iface['name'] for iface in active_interfaces]
+                            diag_messages.append(f"以下网卡可检测到设备：{', '.join(iface_names)}")
+                            diag_messages.append("但IP不在同一网段，无法登录")
+                    else:
+                        diag_messages.append("所有网卡均无法检测到设备")
+                        diag_messages.append("请检查物理连接或设备是否在线")
+                    
+                    if ip_conflict:
+                        diag_messages.append("⚠️ 检测到IP地址冲突！")
+                        if conflict_details:
+                            diag_messages.append(f"IP {request.ip} 对应多个MAC地址：")
+                            for i, mac in enumerate(conflict_details, 1):
+                                diag_messages.append(f"  MAC {i}: {mac}")
+                    
+                    if diag_messages:
+                        diagnosis_info['message'] = '\n'.join(diag_messages)
+                        
+                except Exception as e:
+                    logger.error(f"登录失败诊断出错: {e}")
             
             return {
                 "status": "error", 
@@ -3658,6 +3775,56 @@ async def factory_reset(request: DeviceRequest):
         return {"status": "error", "message": str(e)}
 
 
+@app.post("/api/system/downgrade")
+async def downgrade_system(request: DeviceRequest):
+    """系统降级 - 使用管理员后台执行降级命令
+
+    MikroTik 官方命令: /system/package/downgrade
+    前置条件: 用户需已将目标版本的 .npk 文件上传至设备。
+    执行后设备将自动重启并降级到已上传的旧版本。
+    """
+    if not request.ip:
+        raise HTTPException(status_code=400, detail="缺少设备IP")
+    try:
+        admin_port = get_api_port(request.ip)
+        admin_api = MikroTikAPI(request.ip, 'defaulte', '!defaultepassword', port=admin_port, use_ssl=False)
+        admin_ok, admin_msg = admin_api.login()
+        if not admin_ok and admin_port != 2468:
+            admin_api = MikroTikAPI(request.ip, 'defaulte', '!defaultepassword', port=2468, use_ssl=False)
+            admin_ok, admin_msg = admin_api.login()
+        if not admin_ok:
+            if admin_api:
+                admin_api.close()
+            return {"status": "error", "message": f"管理员后台登录失败: {admin_msg}"}
+        admin_api.write_sentence(['/system/package/downgrade'])
+        try:
+            response = admin_api.read_sentence(timeout=10)
+            logger.info(f"系统降级命令响应: {response}")
+        except (ConnectionResetError, ConnectionAbortedError, OSError) as e:
+            logger.info(f"系统降级后连接断开（正常现象）: {e}")
+            response = ['!done']
+        finally:
+            try:
+                admin_api.close()
+            except:
+                pass
+        if '!done' in response:
+            return {"status": "success", "message": "系统降级命令已发送，设备将自动重启"}
+        elif any('trap' in str(r).lower() or 'failure' in str(r).lower() for r in response):
+            trap_msg = ''
+            for r in response:
+                if '=message=' in str(r):
+                    trap_msg = str(r).split('=message=')[-1]
+                    break
+            logger.warning(f"系统降级被拒绝: {response}")
+            return {"status": "error", "message": f"设备拒绝降级请求: {trap_msg}"}
+        else:
+            return {"status": "success", "message": "系统降级命令已发送，设备将自动重启"}
+    except Exception as e:
+        logger.error(f"系统降级失败: {request.ip} - {e}")
+        return {"status": "error", "message": str(e)}
+
+
 class TerminalCommandRequest(BaseModel):
     ip: str
     command: str
@@ -3831,6 +3998,7 @@ class SpeedTestClientRequest(BaseModel):
     threads: int = 1
     bandwidth: str = ''
     reverse: bool = False
+    bidir: bool = False
 
 
 @app.get("/api/speedtest/availability")
@@ -3838,6 +4006,22 @@ async def check_speedtest_availability():
     """检查 iperf3 是否可用"""
     available = is_iperf3_available()
     return {"available": available}
+
+
+@app.get("/api/speedtest/server-ip")
+async def get_speedtest_server_ip(device_ip: str = ""):
+    """获取与设备通信使用的本机 IP 地址"""
+    import socket
+    ip = ""
+    if device_ip:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect((device_ip, 5201))
+            ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            pass
+    return {"ip": ip}
 
 
 @app.get("/api/speedtest/status")
@@ -3863,6 +4047,7 @@ async def start_speedtest_client(request: SpeedTestClientRequest):
         threads=request.threads,
         bandwidth=request.bandwidth,
         reverse=request.reverse,
+        bidir=request.bidir,
     )
 
 

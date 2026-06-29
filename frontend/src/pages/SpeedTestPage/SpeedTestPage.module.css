@@ -13,6 +13,7 @@
   font-weight: 600;
   margin-bottom: var(--space-lg);
   color: var(--color-text-primary);
+  flex-shrink: 0;
 }
 
 .unavailable {
@@ -41,6 +42,7 @@
   border-radius: var(--radius-lg);
   padding: var(--space-lg);
   margin-bottom: var(--space-lg);
+  flex-shrink: 0;
 }
 
 .configTitle {
@@ -136,12 +138,36 @@
   color: var(--color-text-secondary);
 }
 
+/* 服务器IP地址列表 */
+.serverIpList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.serverIpTag {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border: 1px solid rgba(88, 166, 255, 0.4);
+  border-radius: var(--radius-md);
+  background: rgba(88, 166, 255, 0.12);
+  color: var(--color-accent-primary);
+  font-size: 13px;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-weight: 500;
+  user-select: all;
+  cursor: text;
+}
+
 /* 操作区 */
 .actionBar {
   display: flex;
   align-items: center;
   gap: var(--space-md);
   margin-bottom: var(--space-lg);
+  flex-shrink: 0;
 }
 
 .statusBadge {
@@ -185,6 +211,7 @@
   border-radius: var(--radius-lg);
   margin-bottom: var(--space-lg);
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .outputHeader {
@@ -193,12 +220,26 @@
   align-items: center;
   padding: 12px var(--space-md);
   border-bottom: 1px solid var(--color-border-primary);
+  gap: var(--space-sm);
 }
 
 .outputTitle {
   font-size: 14px;
   font-weight: 600;
   color: var(--color-text-primary);
+}
+
+.outputBadge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(88, 166, 255, 0.15);
+  color: var(--color-accent-primary);
+  font-weight: 500;
+}
+
+.chartBody {
+  padding: var(--space-md);
 }
 
 .outputBody {
@@ -222,12 +263,45 @@
   font-style: italic;
 }
 
+/* 原始输出折叠区 */
+.rawOutputSection {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-lg);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.rawOutputSummary {
+  padding: 10px var(--space-md);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.2s;
+}
+
+.rawOutputSummary:hover {
+  color: var(--color-accent-primary);
+}
+
+.rawOutputSection[open] .rawOutputSummary {
+  border-bottom: 1px solid var(--color-border-primary);
+}
+
+.rawOutputSection .outputBody {
+  height: 200px;
+}
+
 /* 汇总区 */
 .summarySection {
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border-primary);
   border-radius: var(--radius-lg);
   padding: var(--space-lg);
+  flex-shrink: 0;
 }
 
 .summaryTitle {

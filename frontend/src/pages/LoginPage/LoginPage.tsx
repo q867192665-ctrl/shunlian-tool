@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAppState } from '../../contexts/AppContext';
-import { SunOutlined, MoonOutlined, SearchOutlined, SkinOutlined } from '@ant-design/icons';
+import { SunOutlined, MoonOutlined, SearchOutlined, SkinOutlined, CopyOutlined } from '@ant-design/icons';
+import { Modal, message as antMessage } from 'antd';
 import api from '../../services/api';
 import { UpdateModal } from '../../components/organisms/UpdateModal/UpdateModal';
 import type { DeviceInfo } from '../../types/api';
 import styles from './LoginPage.module.css';
 
 export const LoginPage: React.FC = () => {
-  const { setRouter, setLoggedIn, theme, setTheme } = useAppState();
+  const { setRouter, setLoggedIn, theme, setTheme, debugModeEnabled, setDebugModeEnabled, compatModeEnabled, setCompatModeEnabled } = useAppState();
 
   // 简单加密/解密：使用固定密钥进行Base64+XOR混淆，防止明文暴露
   const _ENC_KEY = 'SLSC2025';
@@ -43,11 +44,127 @@ export const LoginPage: React.FC = () => {
   const [selectedPlatform, setSelectedPlatform] = useState('');
   const [selectedMac, setSelectedMac] = useState('');
   const [debugModalVisible, setDebugModalVisible] = useState(false);
-  // 调试模式仅当次会话有效：使用 sessionStorage，网页重开（关闭标签页/刷新）后自动失效
-  const [debugModeEnabled, setDebugModeEnabled] = useState(() => sessionStorage.getItem('debugModeEnabled') === 'true');
-  // 兼容模式仅当次会话有效：使用 sessionStorage，网页重开（关闭标签页/刷新）后自动失效
-  // 启用后可搜索并登录 MikroTik 平台设备（使用 MikroTik 默认端口号，后台不登录管理员账号）
-  const [compatModeEnabled, setCompatModeEnabled] = useState(() => sessionStorage.getItem('compatModeEnabled') === 'true');
+  const [diagnosisModalVisible, setDiagnosisModalVisible] = useState(false);
+  const [diagnosisContent, setDiagnosisContent] = useState('');
+  const [ipConflict, setIpConflict] = useState(false);
+  const [conflictDetails, setConflictDetails] = useState<string[]>([]);
+  const [sortColumn, setSortColumn] = useState<string>('');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  // 排序函数
+  const sortDevices = (devices: DeviceInfo[], column: string, order: 'asc' | 'desc'): DeviceInfo[] => {
+    if (!column) return devices;
+    
+    return [...devices].sort((a, b) => {
+      let aValue: string | number = '';
+      let bValue: string | number = '';
+      
+      switch (column) {
+        case 'status':
+          aValue = a['Identity'] || a.identity || '';
+          bValue = b['Identity'] || b.identity || '';
+          break;
+        case 'name':
+          aValue = a['Identity'] || a.identity || '';
+          bValue = b['Identity'] || b.identity || '';
+          break;
+        case 'ip':
+          aValue = a['IPv4-Address'] || a.ipv4_address || a.ip || '';
+          bValue = b['IPv4-Address'] || b.ipv4_address || b.ip || '';
+          break;
+        case 'mac':
+          aValue = a['MAC-Address'] || a.mac_address || '';
+          bValue = b['MAC-Address'] || b.mac_address || '';
+          break;
+        case 'version':
+          aValue = (a['Version'] || '').toString().replace(/\s+\d{4}-\d{2}-\d{2}.*$/, '');
+          bValue = (b['Version'] || '').toString().replace(/\s+\d{4}-\d{2}-\d{2}.*$/, '');
+          break;
+        case 'interface':
+          aValue = a['Interface name'] || a.interface_name || '';
+          bValue = b['Interface name'] || b.interface_name || '';
+          break;
+        case 'uptime':
+          aValue = a['Uptime'] || '';
+          bValue = b['Uptime'] || '';
+          break;
+        default:
+          return 0;
+      }
+      
+      // 如果是数字，则转换为数字比较
+      if (!isNaN(Number(aValue)) && !isNaN(Number(bValue))) {
+        const numA = Number(aValue);
+        const numB = Number(bValue);
+        return order === 'asc' ? numA - numB : numB - numA;
+      }
+      
+      // 字符串比较
+      const strA = String(aValue).toLowerCase();
+      const strB = String(bValue).toLowerCase();
+      
+      if (order === 'asc') {
+        return strA.localeCompare(strB);
+      } else {
+        return strB.localeCompare(strA);
+      }
+    });
+  };
+
+  // 处理列排序
+  const handleSort = (column: string) => {
+    if (sortColumn === column) {
+      // 如果当前列已经是升序，则切换为降序；如果是降序，则取消排序
+      if (sortOrder === 'asc') {
+        setSortOrder('desc');
+      } else {
+        setSortColumn('');
+        setSortOrder('asc');
+      }
+    } else {
+      // 点击新列，按升序排列
+      setSortColumn(column);
+      setSortOrder('asc');
+    }
+  };
+
+  // 复制文本到剪贴板
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        antMessage.success(`${label} 已复制到剪贴板`);
+        return;
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        antMessage.success(`${label} 已复制到剪贴板`);
+      }
+    } catch (e) {
+      antMessage.error('复制失败');
+    }
+  };
+
+  const handleCopyIp = (ip: string) => {
+    if (ip && ip !== '-') copyToClipboard(ip, 'IP地址');
+  };
+
+  const handleCopyMac = (mac: string) => {
+    if (mac && mac !== '-') copyToClipboard(mac, 'MAC地址');
+  };
+
+  // 阻止事件冒泡，避免触发行点击
+  const stopPropagation = (e: React.MouseEvent) => {
+    e.stopPropagation();
+  };
+
+  // 调试模式 / 兼容模式 状态已上提到 AppContext，登录/退出设备不会丢失，仅刷新浏览器或重开浏览器时清除
   const [contextMenu, setContextMenu] = useState<{ visible: boolean; x: number; y: number; device: DeviceInfo | null }>({ visible: false, x: 0, y: 0, device: null });
   const contextMenuRef = React.useRef<HTMLDivElement>(null);
   const themeDropdownRef = React.useRef<HTMLDivElement>(null);
@@ -172,7 +289,7 @@ export const LoginPage: React.FC = () => {
       const response = await fetch('/api/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ip, username, password, platform: selectedPlatform }),
+        body: JSON.stringify({ ip, username, password, platform: selectedPlatform, compat_mode: compatModeEnabled }),
       });
       const result = await response.json();
 
@@ -189,8 +306,16 @@ export const LoginPage: React.FC = () => {
         });
         setLoggedIn(true);
       } else {
-        let errorMsg = result.message || '登录失败';
-        const msg = (result.message || '').toLowerCase();
+        // 重置诊断弹窗状态
+        setDiagnosisModalVisible(false);
+        setDiagnosisContent('');
+        setIpConflict(false);
+        setConflictDetails([]);
+
+        // 兼容 FastAPI HTTPException 的 detail 字段
+        const rawMsg = result.message || result.detail || '登录失败';
+        let errorMsg = rawMsg;
+        const msg = rawMsg.toLowerCase();
         if (msg.includes('timeout') || msg.includes('timed out') || msg.includes('超时')) {
           errorMsg = '连接超时，请检查设备IP地址是否正确';
         } else if (msg.includes('refused') || msg.includes('connection refused') || msg.includes('连接被拒绝')) {
@@ -201,12 +326,21 @@ export const LoginPage: React.FC = () => {
           errorMsg = '用户名或密码错误';
         }
         
-        // 添加诊断信息
+        // 有诊断信息时弹出Modal
         if (result.diagnosis && result.diagnosis.message) {
-          errorMsg += '\n\n' + result.diagnosis.message;
+          setDiagnosisContent(result.diagnosis.message);
+          if (result.diagnosis.ip_conflict) {
+            setIpConflict(true);
+            setConflictDetails(result.diagnosis.conflict_details || []);
+          } else {
+            setIpConflict(false);
+            setConflictDetails([]);
+          }
+          setDiagnosisModalVisible(true);
+          setError(errorMsg);
+        } else {
+          setError(errorMsg);
         }
-        
-        setError(errorMsg);
       }
     } catch (e: any) {
       setError(e.message || '连接服务器失败，请确保后端服务已启动');
@@ -231,21 +365,14 @@ export const LoginPage: React.FC = () => {
     if (e.key === 'Enter') handleLogin();
   };
 
-  // 启用调试模式（仅当次会话有效，sessionStorage 在标签页关闭/刷新后自动清除）
+  // 启用调试模式（状态保存在 AppContext，登录/退出设备不丢失，刷新浏览器清除）
   const handleEnableDebugMode = () => {
-    sessionStorage.setItem('debugModeEnabled', 'true');
     setDebugModeEnabled(true);
   };
 
-  // 启用/关闭兼容模式（仅当次会话有效，sessionStorage 在标签页关闭/刷新后自动清除）
+  // 启用/关闭兼容模式（状态保存在 AppContext，登录/退出设备不丢失，刷新浏览器清除）
   const handleToggleCompatMode = () => {
-    const next = !compatModeEnabled;
-    if (next) {
-      sessionStorage.setItem('compatModeEnabled', 'true');
-    } else {
-      sessionStorage.removeItem('compatModeEnabled');
-    }
-    setCompatModeEnabled(next);
+    setCompatModeEnabled(!compatModeEnabled);
   };
 
   // 右键菜单处理
@@ -292,6 +419,9 @@ export const LoginPage: React.FC = () => {
     const macAddr = (d['MAC-Address'] || d.mac_address || '').toString().toLowerCase();
     return identity.includes(s) || dip.includes(s) || macAddr.includes(s);
   });
+
+  // 应用排序
+  const sortedDevices = sortColumn ? sortDevices(filteredDevices, sortColumn, sortOrder) : filteredDevices;
 
   return (
     <>
@@ -431,17 +561,28 @@ export const LoginPage: React.FC = () => {
             <table className={styles.deviceTable}>
               <thead>
                 <tr>
-                  <th>状态</th>
-                  <th>名称</th>
-                  <th>IP 地址</th>
-                  <th>MAC 地址</th>
-                  <th>版本</th>
-                  <th>发现接口</th>
-                  <th>运行时间</th>
+                  <th className={sortColumn === 'name' ? styles.thActive : ''} onClick={() => handleSort('name')}>
+                    名称{sortColumn === 'name' && <span className={styles.sortIndicator}>{sortOrder === 'asc' ? '▲' : '▼'}</span>}
+                  </th>
+                  <th className={sortColumn === 'ip' ? styles.thActive : ''} onClick={() => handleSort('ip')}>
+                    IP 地址{sortColumn === 'ip' && <span className={styles.sortIndicator}>{sortOrder === 'asc' ? '▲' : '▼'}</span>}
+                  </th>
+                  <th className={sortColumn === 'mac' ? styles.thActive : ''} onClick={() => handleSort('mac')}>
+                    MAC 地址{sortColumn === 'mac' && <span className={styles.sortIndicator}>{sortOrder === 'asc' ? '▲' : '▼'}</span>}
+                  </th>
+                  <th className={sortColumn === 'version' ? styles.thActive : ''} onClick={() => handleSort('version')}>
+                    版本{sortColumn === 'version' && <span className={styles.sortIndicator}>{sortOrder === 'asc' ? '▲' : '▼'}</span>}
+                  </th>
+                  <th className={sortColumn === 'interface' ? styles.thActive : ''} onClick={() => handleSort('interface')}>
+                    发现接口{sortColumn === 'interface' && <span className={styles.sortIndicator}>{sortOrder === 'asc' ? '▲' : '▼'}</span>}
+                  </th>
+                  <th className={sortColumn === 'uptime' ? styles.thActive : ''} onClick={() => handleSort('uptime')}>
+                    运行时间{sortColumn === 'uptime' && <span className={styles.sortIndicator}>{sortOrder === 'asc' ? '▲' : '▼'}</span>}
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {filteredDevices.map((d, i) => {
+                {sortedDevices.map((d, i) => {
                   const dip = d['IPv4-Address'] || d.ipv4_address || d.ip || '';
                   return (
                     <tr
@@ -451,10 +592,27 @@ export const LoginPage: React.FC = () => {
                       onDoubleClick={() => { selectDevice(d); handleLogin(); }}
                       onContextMenu={(e) => handleContextMenu(e, d)}
                     >
-                      <td><span className={styles.statusDot} /></td>
-                      <td className={styles.deviceName}>{d['Identity'] || d.identity || '-'}</td>
-                      <td className={styles.deviceIp}>{dip || '-'}</td>
-                      <td className={styles.deviceMac}>{d['MAC-Address'] || d.mac_address || '-'}</td>
+                      <td>
+                        <span className={styles.deviceName}>{d['Identity'] || d.identity || '-'}</span>
+                      </td>
+                      <td>
+                        <span
+                          className={styles.copyableText}
+                          onClick={(e) => { stopPropagation(e); handleCopyIp(dip || '-'); }}
+                          title="点击复制IP地址"
+                        >
+                          {dip || '-'}
+                        </span>
+                      </td>
+                      <td>
+                        <span
+                          className={styles.copyableText}
+                          onClick={(e) => { stopPropagation(e); handleCopyMac(d['MAC-Address'] || d.mac_address || '-'); }}
+                          title="点击复制MAC地址"
+                        >
+                          {d['MAC-Address'] || d.mac_address || '-'}
+                        </span>
+                      </td>
                       <td>{(d['Version'] || '').toString().replace(/\s+\d{4}-\d{2}-\d{2}.*$/, '') || '-'}</td>
                       <td>{d['Interface name'] || d.interface_name || '--'}</td>
                       <td>{d['Uptime'] || '--'}</td>
@@ -510,7 +668,7 @@ export const LoginPage: React.FC = () => {
                 <div className={styles.debugOptionInfo}>
                   <div className={styles.debugOptionTitle}>兼容模式</div>
                   <div className={styles.debugDesc}>
-                    启用后，可搜索并登录 MikroTik 平台设备，所有设备功能端口号均使用 MikroTik 默认端口（API 8728、Telnet 23、FTP 21 等），后台不会登录管理员账号。
+                    启用后，可搜索其它品牌设备。
                     <br />
                     该功能仅对当前会话有效，关闭或刷新页面后自动失效。
                   </div>
@@ -540,6 +698,48 @@ export const LoginPage: React.FC = () => {
           </div>
         </div>
       )}
+      {/* 网络诊断弹窗 */}
+      <Modal
+        title={
+          <span>
+            网络诊断
+            {ipConflict && (
+              <span style={{ color: '#ff4d4f', marginLeft: 8 }}>
+                ⚠️ IP地址冲突
+              </span>
+            )}
+          </span>
+        }
+        open={diagnosisModalVisible}
+        onOk={() => setDiagnosisModalVisible(false)}
+        onCancel={() => setDiagnosisModalVisible(false)}
+        okText="关闭"
+        width={500}
+      >
+        <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.8', fontSize: '14px' }}>
+          {diagnosisContent}
+        </div>
+        {ipConflict && conflictDetails.length > 0 && (
+          <div style={{ marginTop: 16, padding: 12, background: '#fff2f0', border: '1px solid #ffccc7', borderRadius: 4 }}>
+            <div style={{ color: '#ff4d4f', fontWeight: 'bold', marginBottom: 8 }}>
+              冲突详情：
+            </div>
+            <div style={{ color: '#595959' }}>
+              该IP对应多个MAC地址：
+            </div>
+            <ul style={{ margin: '8px 0', paddingLeft: 20 }}>
+              {conflictDetails.map((mac, index) => (
+                <li key={index} style={{ fontFamily: 'monospace', color: '#cf1322' }}>
+                  {mac}
+                </li>
+              ))}
+            </ul>
+            <div style={{ color: '#8c8c8c', fontSize: '12px' }}>
+              可能原因：网络中存在IP地址配置冲突，请检查设备网络设置
+            </div>
+          </div>
+        )}
+      </Modal>
     </>
   );
 };

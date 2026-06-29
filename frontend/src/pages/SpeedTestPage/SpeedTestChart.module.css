@@ -1,0 +1,89 @@
+.chartSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.chartWrapper {
+  position: relative;
+  height: 400px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  border: 1px solid var(--color-border-primary);
+}
+
+.canvasContainer {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.chartEmpty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--color-text-secondary);
+  opacity: 0.5;
+  font-style: italic;
+  font-size: 13px;
+}
+
+.metricsRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--space-sm);
+}
+
+.metricCard {
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.metricValue {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: 4px;
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+  line-height: 1.2;
+}
+
+.upload {
+  color: #58a6ff;
+}
+
+.download {
+  color: #3fb950;
+}
+
+.metricLabel {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.directionTag {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.tagUpload {
+  background: rgba(88, 166, 255, 0.2);
+  color: #58a6ff;
+}
+
+.tagDownload {
+  background: rgba(63, 185, 80, 0.2);
+  color: #3fb950;
+}

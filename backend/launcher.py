@@ -56,6 +56,8 @@ def ensure_single_instance():
 
     防止用户多次双击图标导致多个 ShunLianTool.exe 同时运行，
     多个实例的守护循环会互相 kill 对方启动的后端，导致后端不断重启。
+
+    第二次启动时：直接打开浏览器，然后退出（不启动新的守护进程）。
     """
     if platform.system() != 'Windows':
         return True
@@ -65,8 +67,10 @@ def ensure_single_instance():
         kernel32 = ctypes.windll.kernel32
         mutex = kernel32.CreateMutexW(None, False, mutex_name)
         if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
-            logger.warning("检测到启动器已在运行，退出当前实例")
-            return False
+            logger.info("检测到启动器已在运行，直接打开浏览器")
+            # 第二次启动：直接打开浏览器，然后退出
+            open_browser()
+            sys.exit(0)
         # 保持互斥锁句柄不被 GC 回收（进程退出时自动释放）
         ensure_single_instance._mutex_handle = mutex
         return True

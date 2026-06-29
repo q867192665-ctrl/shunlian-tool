@@ -2,7 +2,7 @@
 ; 使用前请先运行 build_all.bat 生成 exe 文件
 
 #define AppName "瞬联调试工具"
-#define AppVersion "1.0.8"
+#define AppVersion "1.0.9"
 #define AppPublisher "上海瞬联数创通信有限公司"
 #define AppExeName "ShunLianTool.exe"
 #define BackendExeName "shunlian_backend.exe"
@@ -54,7 +54,7 @@ Source: "dist\setup_files\更新日志.md"; DestDir: "{app}"; Flags: ignoreversi
 ; 设备配置脚本（重命名为 slsc_data.sld 以隐藏原始类型）
 Source: "dist\setup_files\slsc_data.sld"; DestDir: "{app}"; Flags: ignoreversion
 ; WinBox 工具（重命名为 slsc_runtime.slr 以隐藏原始类型，调用时恢复为 .exe）
-Source: "dist\setup_files\slsc_runtime.slr"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\setup_files\slsc_runtime.slr"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 ; 证书导入工具
 Source: "import_cert.py"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "import_certificate.bat"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist

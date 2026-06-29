@@ -200,13 +200,13 @@
 }
 
 .navigation :global(.ant-menu-sub) {
-  background-color: rgba(0, 0, 0, 0.2) !important;
+  background-color: transparent !important;
 }
 
 .navigation :global(.ant-menu-sub .ant-menu-item) {
   padding-left: calc(var(--space-lg) + var(--space-xl)) !important;
-  height: 40px !important;
-  line-height: 40px !important;
+  height: var(--size-button-lg) !important;
+  line-height: var(--size-button-lg) !important;
 }
 
 .navigation :global(.ant-menu-item-icon),

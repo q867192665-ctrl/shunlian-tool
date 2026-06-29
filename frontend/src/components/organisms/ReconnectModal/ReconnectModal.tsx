@@ -37,6 +37,8 @@ export const ReconnectModal: React.FC<ReconnectModalProps> = ({
     }
 
     try {
+      // 若当前重连的是非 SLSC 平台设备，按原会话策略开启兼容模式
+      const isSlsc = (router?.platform || '').toUpperCase().includes('SLSC');
       const response = await fetch('/api/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -45,6 +47,7 @@ export const ReconnectModal: React.FC<ReconnectModalProps> = ({
           username: router.username,
           password: router.password,
           platform: router.platform || '',
+          compat_mode: !isSlsc,
         }),
       });
 

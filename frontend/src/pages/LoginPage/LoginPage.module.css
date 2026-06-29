@@ -215,24 +215,89 @@
 .discoveryTitle { font-size: var(--font-size-sm); font-weight: 600; color: var(--color-text-primary); }
 .deviceCount { font-size: 13px; color: var(--color-accent-primary); }
 .deviceList { flex: 1; overflow-y: auto; padding: 0 var(--space-xl); }
-.deviceTable { width: 100%; border-collapse: collapse; }
+
+/* 设备列表 - HTML table 结构，背景色匹配终端列表 */
+.deviceTable {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--color-bg-secondary);
+}
+
 .deviceTable th {
-  position: sticky; top: 0; background: var(--color-bg-primary); z-index: 1;
-  padding: var(--space-md); text-align: left; font-size: 12px; font-weight: 600;
-  color: var(--color-text-secondary); border-bottom: 1px solid var(--color-border-primary);
-  text-transform: uppercase; letter-spacing: 0.5px;
+  position: sticky;
+  top: 0;
+  background: var(--color-bg-tertiary);
+  z-index: 1;
+  padding: var(--space-md);
+  text-align: center;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  vertical-align: middle;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: color var(--transition-fast);
 }
+
+.deviceTable th:hover {
+  color: var(--color-text-primary);
+}
+
 .deviceTable td {
-  padding: var(--space-md); border-bottom: 1px solid var(--color-border-primary);
-  font-size: var(--font-size-xs); color: var(--color-text-primary);
+  padding: var(--space-md);
+  border-bottom: 1px solid var(--color-border-primary);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+  vertical-align: middle;
+  text-align: center;
 }
-.deviceTable tr { cursor: pointer; transition: background var(--transition-fast); }
-.deviceTable tr:hover { background: var(--color-bg-secondary); }
-.deviceTable tr.selected { background: rgba(255, 107, 53, 0.1); }
+
+.sortIndicator {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 10px;
+  color: var(--color-accent-primary);
+}
+
+.thActive {
+  color: var(--color-accent-primary);
+}
+
+.deviceTable tr {
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.deviceTable tr:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.deviceTable tr.selected {
+  background: var(--color-bg-tertiary);
+}
+
 .deviceName { font-weight: 600; color: var(--color-accent-primary); }
-.deviceIp { font-family: var(--font-family-mono); }
-.deviceMac { font-family: var(--font-family-mono); font-size: 12px; color: var(--color-text-secondary); }
-.statusDot { display: inline-block; width: 8px; height: 8px; background: var(--color-accent-success); border-radius: 50%; margin-right: var(--space-sm); }
+.statusDot { display: inline-block; width: 8px; height: 8px; background: var(--color-accent-success); border-radius: 50%; margin-right: var(--space-sm); vertical-align: middle; }
+.copyableText {
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.copyableText:hover {
+  background: rgba(255, 107, 53, 0.1);
+  color: var(--color-accent-primary);
+}
+.copyIcon {
+  display: none;
+}
 .emptyState {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   height: 300px; color: var(--color-text-secondary); gap: var(--space-md);
@@ -271,8 +336,9 @@
 :global([data-theme="light"]) .refreshBtn:hover {
   background: rgba(45, 206, 137, 0.15);
 }
-:global([data-theme="light"]) .deviceTable tr.selected {
-  background: rgba(94, 114, 228, 0.08);
+:global([data-theme="light"]) .deviceTable {
+  background: var(--color-bg-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
 /* 调试弹窗 - 与 UpdateModal 风格统一 */

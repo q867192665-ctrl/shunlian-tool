@@ -5,12 +5,20 @@ import styles from './Header.module.css';
 const PAGE_TITLES: Record<string, string> = {
   dashboard: '仪表盘',
   bridge: '桥接口',
-  'wireless-interfaces': 'Wireless',
-  wireless: 'Wireless',
+  'wireless-interfaces': '无线',
+  wireless: '无线',
   network: '网络',
   firewall: '防火墙',
   routing: '路由',
-  logs: 'Logs',
+  logs: '日志',
+  files: '文件',
+  terminal: '终端',
+  tools: '工具',
+  speedtest: '带宽测速',
+  system: '系统',
+  reboot: '重启',
+  'factory-reset': '恢复出厂',
+  'system-downgrade': '系统降级',
   'device-name': '设备信息',
 };
 

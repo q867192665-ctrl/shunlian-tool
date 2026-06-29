@@ -48,6 +48,12 @@ def is_slsc_device(ip: str) -> bool:
     return 'SLSC' in platform.upper()
 
 
+def is_platform_known(ip: str) -> bool:
+    """判断设备平台是否已被识别（MNDP 发现或前端传入），用于区分"已知非 SLSC"与"跨网段未识别"两种场景"""
+    with _device_platforms_lock:
+        return ip in _device_platforms
+
+
 def get_api_port(ip: str) -> int:
     """获取设备 API 端口（SLSC=2468,  other=8728）"""
     return SLSC_API_PORT if is_slsc_device(ip) else DEFAULT_API_PORT

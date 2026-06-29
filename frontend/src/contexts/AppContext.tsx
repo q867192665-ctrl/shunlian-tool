@@ -12,6 +12,11 @@ interface AppState {
   setLoggedIn: (value: boolean) => void;
   logout: () => void;
   forceLogout: () => Promise<void>;
+  // 高级选项状态：仅内存保留，刷新浏览器/重开浏览器后自动清除
+  debugModeEnabled: boolean;
+  setDebugModeEnabled: (value: boolean) => void;
+  compatModeEnabled: boolean;
+  setCompatModeEnabled: (value: boolean) => void;
 }
 
 const AppContext = createContext<AppState>({
@@ -23,11 +28,17 @@ const AppContext = createContext<AppState>({
   setLoggedIn: () => {},
   logout: () => {},
   forceLogout: async () => {},
+  debugModeEnabled: false,
+  setDebugModeEnabled: () => {},
+  compatModeEnabled: false,
+  setCompatModeEnabled: () => {},
 });
 
 export const AppProvider: React.FC<{ children: React.ReactNode; theme: Theme; setTheme: (theme: Theme) => void }> = ({ children, theme, setTheme }) => {
   const [router, setRouter] = useState<RouterInfo | null>(null);
   const [isLoggedIn, setLoggedIn] = useState(false);
+  const [debugModeEnabled, setDebugModeEnabled] = useState(false);
+  const [compatModeEnabled, setCompatModeEnabled] = useState(false);
 
   const logout = useCallback(() => {
     setRouter(null);
@@ -54,7 +65,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode; theme: Theme; se
   }, [router?.ipAddress]);
 
   return (
-    <AppContext.Provider value={{ router, isLoggedIn, theme, setTheme, setRouter, setLoggedIn, logout, forceLogout }}>
+    <AppContext.Provider value={{ router, isLoggedIn, theme, setTheme, setRouter, setLoggedIn, logout, forceLogout, debugModeEnabled, setDebugModeEnabled, compatModeEnabled, setCompatModeEnabled }}>
       {children}
     </AppContext.Provider>
   );

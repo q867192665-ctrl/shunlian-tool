@@ -145,6 +145,7 @@ class Iperf3Handler:
 
             self._mode = 'server'
             self._output_lines = []
+            self._output_version += 1  # 递增版本号，让前端能检测到新测试开始
             self._result = None
 
             try:
@@ -171,6 +172,7 @@ class Iperf3Handler:
         threads: int = 1,
         bandwidth: str = '',
         reverse: bool = False,
+        bidir: bool = False,
     ) -> Dict[str, Any]:
         """启动 iperf3 客户端"""
         with self._lock:
@@ -204,11 +206,16 @@ class Iperf3Handler:
             if reverse:
                 cmd.append('-R')
 
+            # 双向测速模式（上传+下载同时进行）
+            if bidir:
+                cmd.append('--bidir')
+
             # 强制实时刷新输出
             cmd.append('--forceflush')
 
             self._mode = 'client'
             self._output_lines = []
+            self._output_version += 1  # 递增版本号，让前端能检测到新测试开始
             self._result = Iperf3Result()
             self._result.mode = 'client'
             self._result.protocol = protocol.upper()
@@ -233,12 +240,22 @@ class Iperf3Handler:
         """强制终止 iperf3 进程"""
         if self._process is not None:
             try:
-                self._process.terminate()
+                pid = self._process.pid
+                if sys.platform == 'win32':
+                    # Windows 上使用 taskkill /F /T 强制终止进程树，比 terminate() 更快更可靠
+                    subprocess.run(
+                        ['taskkill', '/F', '/T', '/PID', str(pid)],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                else:
+                    self._process.terminate()
                 try:
-                    self._process.wait(timeout=3)
+                    self._process.wait(timeout=1)
                 except subprocess.TimeoutExpired:
                     self._process.kill()
-                    self._process.wait(timeout=3)
+                    self._process.wait(timeout=1)
             except Exception as e:
                 logger.error(f'停止 iperf3 进程异常: {e}')
             finally:

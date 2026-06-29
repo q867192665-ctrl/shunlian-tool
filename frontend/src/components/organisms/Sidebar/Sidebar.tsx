@@ -17,6 +17,8 @@ import {
   ThunderboltOutlined,
   ReloadOutlined,
   UndoOutlined,
+  ToolOutlined,
+  ArrowDownOutlined,
 } from '@ant-design/icons';
 import type { RouterInfo } from '../../../types/router';
 import styles from './Sidebar.module.css';
@@ -30,13 +32,19 @@ const MENU_ITEMS = [
   { key: 'routing', icon: <ShareAltOutlined />, label: '路由' },
   { key: 'logs', icon: <FileTextOutlined />, label: 'Logs' },
   { key: 'files', icon: <FolderOutlined />, label: '文件' },
-  { key: 'terminal', icon: <CodeOutlined />, label: 'New Terminal' },
+  { key: 'terminal', icon: <CodeOutlined />, label: '终端' },
+  {
+    key: 'tools', icon: <ToolOutlined />, label: '工具',
+    children: [
+      { key: 'speedtest', icon: <ThunderboltOutlined />, label: '带宽测速' },
+    ],
+  },
   {
     key: 'system', icon: <SettingOutlined />, label: '系统',
     children: [
-      { key: 'speedtest', icon: <ThunderboltOutlined />, label: '带宽测速' },
       { key: 'reboot', icon: <ReloadOutlined />, label: '重启' },
       { key: 'factory-reset', icon: <UndoOutlined />, label: '恢复出厂' },
+      { key: 'system-downgrade', icon: <ArrowDownOutlined />, label: '系统降级' },
     ],
   },
 ];
@@ -52,7 +60,8 @@ export interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ router, activeNav, onNavigate, onLogout, onRouterNameChange, onSetNetworkTargetTab }) => {
   const [openKeys, setOpenKeys] = useState<string[]>(() => {
-    if (activeNav === 'reboot' || activeNav === 'speedtest') return ['system'];
+    if (activeNav === 'speedtest') return ['tools'];
+    if (activeNav === 'reboot' || activeNav === 'factory-reset' || activeNav === 'system-downgrade') return ['system'];
     return [];
   });
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -60,7 +69,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ router, activeNav, onNavigate,
   const [editLoading, setEditLoading] = useState(false);
 
   useEffect(() => {
-    if ((activeNav === 'reboot' || activeNav === 'speedtest') && !openKeys.includes('system')) {
+    if (activeNav === 'speedtest' && !openKeys.includes('tools')) {
+      setOpenKeys(prev => [...prev, 'tools']);
+    }
+    if ((activeNav === 'reboot' || activeNav === 'factory-reset' || activeNav === 'system-downgrade') && !openKeys.includes('system')) {
       setOpenKeys(prev => [...prev, 'system']);
     }
   }, [activeNav]);
